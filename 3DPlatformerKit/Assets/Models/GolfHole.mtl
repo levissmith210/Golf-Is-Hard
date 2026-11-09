@@ -1,0 +1,41 @@
+newmtl Rim_Gold
+Ka 0.40 0.27 0.08
+Kd 1.00 0.68 0.16
+Ks 0.12 0.12 0.12
+Ns 24.0
+illum 2
+
+newmtl Liner_Mint
+Ka 0.12 0.32 0.24
+Kd 0.27 0.90 0.63
+Ks 0.12 0.12 0.12
+Ns 24.0
+illum 2
+
+newmtl Cup_Shadow
+Ka 0.025 0.02 0.05
+Kd 0.075 0.045 0.13
+Ks 0.12 0.12 0.12
+Ns 24.0
+illum 2
+
+newmtl Pole_Coral
+Ka 0.35 0.05 0.06
+Kd 0.95 0.16 0.20
+Ks 0.12 0.12 0.12
+Ns 24.0
+illum 2
+
+newmtl Pole_Cream
+Ka 0.35 0.31 0.22
+Kd 1.00 0.91 0.69
+Ks 0.12 0.12 0.12
+Ns 24.0
+illum 2
+
+newmtl Flag_Coral
+Ka 0.38 0.045 0.06
+Kd 1.00 0.13 0.20
+Ks 0.12 0.12 0.12
+Ns 24.0
+illum 2
