@@ -128,8 +128,8 @@ public static class GolfNineHoleCourseBuilder
             hole.transform.position = cupPos;
             SphereCollider triggerCollider = hole.AddComponent<SphereCollider>();
             triggerCollider.isTrigger = true;
-            triggerCollider.center = new Vector3(0, -.12f, 0);
-            triggerCollider.radius = .76f;
+            triggerCollider.center = new Vector3(0, -.78f, 0);
+            triggerCollider.radius = .26f;
             HoleTrigger trigger = hole.AddComponent<HoleTrigger>();
 
             GameObject cup = (GameObject)PrefabUtility.InstantiatePrefab(modelPrefab, course);
@@ -224,6 +224,7 @@ public static class GolfNineHoleCourseBuilder
     }
     static void CarveCups(TerrainData data)
     {
+        const float openingRadius = 0.90f;
         int resolution = data.holesResolution;
         bool[,] holes = new bool[resolution, resolution];
         for (int z = 0; z < resolution; z++)
@@ -231,7 +232,7 @@ public static class GolfNineHoleCourseBuilder
                 holes[z, x] = true;
 
         float cell = Size / resolution;
-        int radius = Mathf.CeilToInt(1.12f / cell);
+        int radius = Mathf.CeilToInt(openingRadius / cell);
         for (int i = 0; i < Stages.Length; i++)
         {
             int cx = Mathf.RoundToInt(Stages[i].cup.x / Size * resolution);
@@ -240,13 +241,12 @@ public static class GolfNineHoleCourseBuilder
             for (int x = Mathf.Max(0, cx - radius); x <= Mathf.Min(resolution - 1, cx + radius); x++)
             {
                 float dx = (x - cx) * cell, dz = (z - cz) * cell;
-                if (dx * dx + dz * dz <= 1.12f * 1.12f)
+                if (dx * dx + dz * dz <= openingRadius * openingRadius)
                     holes[z, x] = false;
             }
         }
         data.SetHoles(0, 0, holes);
     }
-
     static void PaintTerrain(TerrainData data)
     {
         int resolution = data.alphamapResolution;
@@ -372,13 +372,27 @@ public static class GolfNineHoleCourseBuilder
         MeshFilter[] filters = root.GetComponentsInChildren<MeshFilter>(true);
         for (int i = 0; i < filters.Length; i++)
         {
-            MeshFilter f = filters[i];
-            if (f.sharedMesh == null || f.GetComponent<Collider>() != null) continue;
-            MeshCollider collider = f.gameObject.AddComponent<MeshCollider>();
-            collider.sharedMesh = f.sharedMesh;
+            MeshFilter filter = filters[i];
+            if (filter.sharedMesh == null) continue;
+
+            bool isFlag = filter.name.IndexOf("Flag", System.StringComparison.OrdinalIgnoreCase) >= 0;
+            bool isPole = filter.name.IndexOf("Pole", System.StringComparison.OrdinalIgnoreCase) >= 0;
+            if (isFlag || isPole)
+            {
+                Collider[] flagPoleColliders = filter.GetComponents<Collider>();
+                for (int c = 0; c < flagPoleColliders.Length; c++)
+                    Undo.DestroyObjectImmediate(flagPoleColliders[c]);
+
+                if (isFlag && filter.GetComponent<GolfHoleFlagWave>() == null)
+                    Undo.AddComponent<GolfHoleFlagWave>(filter.gameObject);
+                continue;
+            }
+
+            if (filter.GetComponent<Collider>() != null) continue;
+            MeshCollider collider = filter.gameObject.AddComponent<MeshCollider>();
+            collider.sharedMesh = filter.sharedMesh;
         }
     }
-
     static void RemoveOldTestObjects(Scene scene)
     {
         string[] names = { "Hole", "Hole (1)", "GolfHole", "Plane", "Terrain", "Cube (1)", "Nine Hole Course" };
@@ -457,4 +471,5 @@ public static class GolfNineHoleCourseBuilder
         return null;
     }
 }
+
 

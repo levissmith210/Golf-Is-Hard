@@ -43,9 +43,6 @@ public static class FrutigerAeroGolfHoleBuilder
         if (!overwrite && AssetDatabase.LoadAssetAtPath<GameObject>(PrefabPath) != null)
             return;
 
-        if (AssetDatabase.LoadAssetAtPath<GameObject>(PrefabPath) != null)
-            AssetDatabase.DeleteAsset(PrefabPath);
-
         Material turf = MakeMaterial("Turf_Mint", new Color(0.19f, 0.72f, 0.48f), 0.02f, 0.56f);
         Material porcelain = MakeMaterial("Rim_Pearl", new Color(0.86f, 0.97f, 0.98f), 0.10f, 0.92f);
         Material cyan = MakeMaterial("Cup_Aqua", new Color(0.13f, 0.66f, 0.77f), 0.12f, 0.91f);
@@ -62,53 +59,49 @@ public static class FrutigerAeroGolfHoleBuilder
         {
             root = new GameObject("Frutiger Aero Golf Hole");
             SceneManager.MoveGameObjectToScene(root, previewScene);
+            root.AddComponent<GolfHoleAutoCutter>();
 
             Vector2[] collarProfile =
             {
-                new Vector2(1.00f, -0.070f), new Vector2(1.055f, -0.060f),
-                new Vector2(1.085f, -0.030f), new Vector2(1.095f, 0.010f),
-                new Vector2(1.082f, 0.045f), new Vector2(1.055f, 0.068f),
-                new Vector2(0.835f, 0.068f), new Vector2(0.805f, 0.050f),
-                new Vector2(0.785f, 0.018f), new Vector2(0.785f, -0.050f),
-                new Vector2(0.830f, -0.070f)
+                new Vector2(1.00f, -0.090f), new Vector2(1.055f, -0.075f),
+                new Vector2(1.085f, -0.045f), new Vector2(1.095f, -0.020f),
+                new Vector2(1.082f, -0.020f), new Vector2(1.055f, -0.020f),
+                new Vector2(0.835f, -0.080f), new Vector2(0.805f, -0.110f),
+                new Vector2(0.785f, -0.140f), new Vector2(0.785f, -0.190f),
+                new Vector2(0.830f, -0.120f)
             };
             AddLathe(root.transform, "Soft Mint Turf Collar", "Collar_Rounded", collarProfile, 128, turf, true);
 
             Vector2[] rimProfile =
             {
-                new Vector2(0.825f, 0.030f), new Vector2(0.826f, 0.058f),
-                new Vector2(0.812f, 0.088f), new Vector2(0.786f, 0.108f),
-                new Vector2(0.755f, 0.116f), new Vector2(0.625f, 0.116f),
-                new Vector2(0.592f, 0.105f), new Vector2(0.573f, 0.082f),
-                new Vector2(0.568f, 0.045f), new Vector2(0.582f, 0.024f),
-                new Vector2(0.610f, 0.015f), new Vector2(0.785f, 0.015f)
+                new Vector2(0.825f, -0.200f), new Vector2(0.826f, -0.110f),
+                new Vector2(0.812f, -0.110f), new Vector2(0.786f, -0.140f),
+                new Vector2(0.755f, -0.170f), new Vector2(0.575f, -0.240f),
+                new Vector2(0.545f, -0.270f), new Vector2(0.527f, -0.300f),
+                new Vector2(0.523f, -0.320f), new Vector2(0.535f, -0.350f),
+                new Vector2(0.561f, -0.350f), new Vector2(0.785f, -0.140f)
             };
             AddLathe(root.transform, "Rounded Pearl Cup Rim", "Rim_Beveled", rimProfile, 128, porcelain, true);
-            AddTorus(root.transform, "Aqua Rim Inlay", "Rim_Aqua_Inlay", 0.711f, 0.0065f, 0.119f, 128, accentBlue, false);
-            AddTorus(root.transform, "Outer Mint Pinstripe", "Collar_Pinstripe", 1.045f, 0.008f, 0.064f, 128, accentBlue, false);
+            AddTorus(root.transform, "Aqua Rim Inlay", "Rim_Aqua_Inlay", 0.654f, 0.0065f, -0.315f, 128, accentBlue, false);
+            AddTorus(root.transform, "Outer Mint Pinstripe", "Collar_Pinstripe", 1.045f, 0.008f, -0.020f, 128, accentBlue, false);
 
             Vector2[] linerProfile =
             {
-                new Vector2(0.572f, 0.055f), new Vector2(0.558f, 0.012f),
-                new Vector2(0.535f, -0.060f), new Vector2(0.505f, -0.185f),
-                new Vector2(0.475f, -0.330f), new Vector2(0.448f, -0.455f),
-                new Vector2(0.425f, -0.492f), new Vector2(0.405f, -0.475f),
-                new Vector2(0.432f, -0.420f), new Vector2(0.458f, -0.300f),
-                new Vector2(0.488f, -0.160f), new Vector2(0.520f, -0.035f),
-                new Vector2(0.545f, 0.025f)
+                new Vector2(0.526f, -0.320f), new Vector2(0.513f, -0.350f),
+                new Vector2(0.492f, -0.410f), new Vector2(0.465f, -0.500f),
+                new Vector2(0.437f, -0.590f), new Vector2(0.412f, -0.650f),
+                new Vector2(0.391f, -0.680f), new Vector2(0.373f, -0.660f),
+                new Vector2(0.397f, -0.620f), new Vector2(0.421f, -0.530f),
+                new Vector2(0.449f, -0.440f), new Vector2(0.478f, -0.370f),
+                new Vector2(0.501f, -0.330f)
             };
             AddLathe(root.transform, "Smooth Aqua Cup Liner", "Cup_Liner_Smooth", linerProfile, 112, cyan, true);
-            AddDisk(root.transform, "Deep Lagoon Cup Bottom", "Cup_Bottom", 0.425f, -0.488f, 96, deepBlue, true);
-            AddTorus(root.transform, "Cup Bottom Glint", "Cup_Bottom_Glint", 0.285f, 0.008f, -0.481f, 96, accentBlue, false);
-            AddTorus(root.transform, "Cup Socket", "Pole_Socket", 0.070f, 0.014f, -0.410f, 64, porcelain, false);
+            AddDisk(root.transform, "Deep Lagoon Cup Bottom", "Cup_Bottom", 0.391f, -0.675f, 96, deepBlue, true);
+            AddTorus(root.transform, "Cup Bottom Glint", "Cup_Bottom_Glint", 0.262f, 0.008f, -0.668f, 96, accentBlue, false);
+            AddTorus(root.transform, "Cup Socket", "Pole_Socket", 0.070f, 0.014f, -0.550f, 64, porcelain, false);
 
             Mesh sphere = SaveMesh("Smooth_Sphere", CreateSphere("Smooth_Sphere", 32, 20));
-            GameObject pole = AddCylinder(root.transform, "Pearl Flagpole", "Pole_Main", 0.028f, -0.43f, 2.61f, 48, poleWhite, false);
-            CapsuleCollider poleCollider = pole.AddComponent<CapsuleCollider>();
-            poleCollider.direction = 1;
-            poleCollider.radius = 0.035f;
-            poleCollider.height = 3.08f;
-            poleCollider.center = new Vector3(0f, 1.09f, 0f);
+            AddCylinder(root.transform, "Pearl Flagpole", "Pole_Main", 0.028f, -0.58f, 2.76f, 48, poleWhite, false);
 
             AddTorus(root.transform, "Pole Band Aqua 1", "Pole_Band_1", 0.030f, 0.007f, 0.48f, 48, accentBlue, false);
             AddTorus(root.transform, "Pole Band Aqua 2", "Pole_Band_2", 0.030f, 0.007f, 1.02f, 48, accentBlue, false);
@@ -129,7 +122,7 @@ public static class FrutigerAeroGolfHoleBuilder
             for (int i = 0; i < 8; i++)
             {
                 float angle = Mathf.PI * 2f * i / 8f;
-                Vector3 position = new Vector3(Mathf.Cos(angle) * 0.91f, 0.077f, Mathf.Sin(angle) * 0.91f);
+                Vector3 position = new Vector3(Mathf.Cos(angle) * 0.91f, -0.042f, Mathf.Sin(angle) * 0.91f);
                 AddSphere(root.transform, "Pearl Collar Stud " + (i + 1).ToString("00"), sphere, porcelain,
                     position, new Vector3(0.035f, 0.018f, 0.035f));
             }
@@ -138,8 +131,8 @@ public static class FrutigerAeroGolfHoleBuilder
             triggerObject.transform.SetParent(root.transform, false);
             SphereCollider trigger = triggerObject.AddComponent<SphereCollider>();
             trigger.isTrigger = true;
-            trigger.radius = 0.72f;
-            trigger.center = new Vector3(0f, -0.13f, 0f);
+            trigger.radius = 0.20f;
+            trigger.center = new Vector3(0f, -0.50f, 0f);
             triggerObject.AddComponent<HoleTrigger>();
 
             PrefabUtility.SaveAsPrefabAsset(root, PrefabPath);
@@ -302,6 +295,7 @@ public static class FrutigerAeroGolfHoleBuilder
         renderer.sharedMaterials = new[] { aquaMaterial, whiteMaterial };
         renderer.shadowCastingMode = ShadowCastingMode.Off;
         renderer.receiveShadows = false;
+        flag.AddComponent<GolfHoleFlagWave>();
     }
 
     private static Mesh CreateLatheMesh(string meshName, Vector2[] profile, int segments)
@@ -435,3 +429,5 @@ public static class FrutigerAeroGolfHoleBuilder
         AssetDatabase.CreateFolder(parent, name);
     }
 }
+
+

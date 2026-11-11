@@ -8,6 +8,12 @@ using UnityEngine;
 [RequireComponent(typeof(Collider))]
 public class HoleTrigger : MonoBehaviour
 {
+    [Header("Trigger Placement")]
+    [Tooltip("The trigger sphere sits below the rim so the ball has to enter the cup before it counts.")]
+    [SerializeField, Min(0.05f)] private float triggerRadius = 0.26f;
+    [Tooltip("Local Y offset of the cup trigger, measured down from this hole object's pivot.")]
+    [SerializeField] private float triggerDepth = -0.78f;
+
     [Header("Hole Effects")]
     [Tooltip("A particle system prefab to spawn when the ball reaches the hole.")]
     [SerializeField] private ParticleSystem holeParticlePrefab;
@@ -61,7 +67,21 @@ public class HoleTrigger : MonoBehaviour
         soundEffectsSource.dopplerLevel = 0f;
 
         if (holeCollider != null)
+        {
             holeCollider.isTrigger = true;
+            Vector3 triggerCenter = new Vector3(0f, triggerDepth, 0f);
+            float diameter = Mathf.Max(0.05f, triggerRadius) * 2f;
+            if (holeCollider is SphereCollider triggerSphere)
+            {
+                triggerSphere.radius = diameter * 0.5f;
+                triggerSphere.center = triggerCenter;
+            }
+            else if (holeCollider is BoxCollider triggerBox)
+            {
+                triggerBox.size = Vector3.one * diameter;
+                triggerBox.center = triggerCenter;
+            }
+        }
 
         pauseMenu = FindObjectOfType<PauseMenu>();
         courseManager = FindObjectOfType<GolfCourseManager>();
@@ -177,8 +197,7 @@ public class HoleTrigger : MonoBehaviour
 
     private void PlayHoleSound(AudioClip clip, float volume)
     {
-        if (clip != null && soundEffectsSource != null)
-            soundEffectsSource.PlayOneShot(clip, Mathf.Clamp01(volume));
+        GameSettings.PlaySfx(soundEffectsSource, clip, volume);
     }
 
     private void OnGUI()

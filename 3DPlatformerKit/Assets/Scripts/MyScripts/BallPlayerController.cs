@@ -144,6 +144,8 @@ public class BallPlayerController : MonoBehaviour
     private float lastAngleSoundTime = -100f;
     private float lastImpactSoundTime = -100f;
     private bool fullChargeSoundPlayed;
+    private bool tutorialCanShoot = true;
+    private bool tutorialCanAdjustAngle = true;
     private AudioSource rollingSoundSource;
     private Vector3 lastShotDirection = Vector3.forward;
     private Vector3 momentumReplacementStartVelocity;
@@ -153,6 +155,25 @@ public class BallPlayerController : MonoBehaviour
 
     /// <summary>Number of shots successfully fired during this round.</summary>
     public int StrokeCount { get; private set; }
+    public bool TutorialWInputUsed { get; private set; }
+    public bool TutorialSInputUsed { get; private set; }
+    public bool TutorialAngleInputUsed => TutorialWInputUsed && TutorialSInputUsed;
+
+    public void SetTutorialControlAccess(bool canShoot, bool canAdjustAngle)
+    {
+        tutorialCanShoot = canShoot;
+        tutorialCanAdjustAngle = canAdjustAngle;
+        if (!canShoot && isCharging)
+            CancelShot();
+        if (!canAdjustAngle && !isCharging && runtimeArrowObject != null)
+            runtimeArrowObject.SetActive(false);
+    }
+
+    public void ResetTutorialAngleInputProgress()
+    {
+        TutorialWInputUsed = false;
+        TutorialSInputUsed = false;
+    }
 
     private float ChargeProgress
     {
@@ -235,9 +256,17 @@ public class BallPlayerController : MonoBehaviour
             return;
         }
 
-        UpdateShotElevation();
+        if (tutorialCanAdjustAngle)
+            UpdateShotElevation();
         UpdateAngleIndicatorTimeout();
         UpdateRollingSound();
+
+        if (!tutorialCanShoot)
+        {
+            if (isCharging)
+                CancelShot();
+            return;
+        }
 
         if (aimCamera == null)
             aimCamera = Camera.main;
@@ -287,9 +316,15 @@ public class BallPlayerController : MonoBehaviour
         float elevationInput = 0f;
         bool angleKeyActive = Input.GetKey(KeyCode.W) || Input.GetKey(KeyCode.S);
         if (Input.GetKey(KeyCode.W))
+        {
             elevationInput += 1f;
+            TutorialWInputUsed = true;
+        }
         if (Input.GetKey(KeyCode.S))
+        {
             elevationInput -= 1f;
+            TutorialSInputUsed = true;
+        }
 
         if (angleKeyActive)
         {
@@ -456,7 +491,7 @@ public class BallPlayerController : MonoBehaviour
         PlayBallSound(shotLaunchSound, shotSoundVolume);
     }
 
-    /// <summary>Stops further shots and freezes the ball after it reaches the hole.</summary>
+    /// <summary>Stops further shots while leaving Rigidbody motion active so the ball can sink.</summary>
     public void StopForHole()
     {
         if (holeCompleted)
@@ -475,15 +510,7 @@ public class BallPlayerController : MonoBehaviour
             ballRigidbody = GetComponent<Rigidbody>();
 
         if (ballRigidbody != null)
-        {
-#if UNITY_6000_0_OR_NEWER
-            ballRigidbody.linearVelocity = Vector3.zero;
-#else
-            ballRigidbody.velocity = Vector3.zero;
-#endif
-            ballRigidbody.angularVelocity = Vector3.zero;
-            ballRigidbody.isKinematic = true;
-        }
+            ballRigidbody.WakeUp();
 
         // Restore the ball's normal shape in case the hole was reached during a fast roll.
         lastShotTime = -100f;
@@ -631,8 +658,19 @@ public class BallPlayerController : MonoBehaviour
             soundEffectsSource = gameObject.AddComponent<AudioSource>();
 
         soundEffectsSource.playOnAwake = false;
-        soundEffectsSource.spatialBlend = 1f;
+        // The camera stays several units from the ball, so keep one-shot cues clear and audible.
+        // The continuous rolling loop below remains 3D and positional.
+        soundEffectsSource.spatialBlend = 0f;
         soundEffectsSource.dopplerLevel = 0f;
+
+        LoadSoundClip(chargeStartSound);
+        LoadSoundClip(shotLaunchSound);
+        LoadSoundClip(fullChargeSound);
+        LoadSoundClip(shotCancelSound);
+        LoadSoundClip(angleAdjustSound);
+        LoadSoundClip(groundBounceSound);
+        LoadSoundClip(obstacleImpactSound);
+        LoadSoundClip(rollingLoopSound);
 
         if (rollingLoopSound == null)
             return;
@@ -646,12 +684,18 @@ public class BallPlayerController : MonoBehaviour
         rollingSoundSource.volume = 0f;
     }
 
+    private static void LoadSoundClip(AudioClip clip)
+    {
+        if (clip != null && clip.loadState == AudioDataLoadState.Unloaded)
+            clip.LoadAudioData();
+    }
+
     private void PlayBallSound(AudioClip clip, float volume)
     {
         if (clip == null || soundEffectsSource == null)
             return;
 
-        soundEffectsSource.PlayOneShot(clip, Mathf.Clamp01(volume));
+        GameSettings.PlaySfx(soundEffectsSource, clip, volume);
     }
 
     private void PlayImpactSound(Collision collision)
@@ -699,7 +743,7 @@ public class BallPlayerController : MonoBehaviour
         float intensity = shouldRoll
             ? Mathf.InverseLerp(rollingSoundStartSpeed, rollingSpeedForFullVolume, speed)
             : 0f;
-        float targetVolume = rollingSoundVolume * intensity;
+        float targetVolume = rollingSoundVolume * intensity * GameSettings.SfxVolume;
         rollingSoundSource.volume = Mathf.MoveTowards(
             rollingSoundSource.volume, targetVolume, Time.deltaTime * 2.5f);
 
@@ -1309,3 +1353,6 @@ public class BallPlayerController : MonoBehaviour
         GUI.color = previousColor;
     }
 }
+
+
+

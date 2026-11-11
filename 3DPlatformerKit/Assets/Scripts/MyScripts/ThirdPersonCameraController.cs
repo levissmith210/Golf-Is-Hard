@@ -39,6 +39,9 @@ public class ThirdPersonCameraController : MonoBehaviour
     private Vector3 followVelocity;
     private bool hasFollowPosition;
     private bool isCursorLocked;
+    private bool tutorialLookAllowed = true;
+    private bool tutorialZoomAllowed = true;
+    private bool tutorialZoomResetAllowed = true;
 
     /// <summary>
     /// True during the frame the cursor was locked, allowing the ball controller
@@ -46,6 +49,25 @@ public class ThirdPersonCameraController : MonoBehaviour
     /// </summary>
     public bool CursorCapturedThisFrame { get; private set; }
     public bool IsCursorLocked => isCursorLocked;
+    public bool TutorialLookInputDetected { get; private set; }
+    public bool TutorialZoomInUsed { get; private set; }
+    public bool TutorialZoomOutUsed { get; private set; }
+    public bool TutorialZoomResetUsed { get; private set; }
+
+    public void SetTutorialInputAccess(bool allowLook, bool allowZoom, bool allowZoomReset, bool resetProgress)
+    {
+        tutorialLookAllowed = allowLook;
+        tutorialZoomAllowed = allowZoom;
+        tutorialZoomResetAllowed = allowZoomReset;
+
+        if (resetProgress)
+        {
+            TutorialLookInputDetected = false;
+            TutorialZoomInUsed = false;
+            TutorialZoomOutUsed = false;
+            TutorialZoomResetUsed = false;
+        }
+    }
 
     public void LockMouse()
     {
@@ -117,20 +139,38 @@ public class ThirdPersonCameraController : MonoBehaviour
         if (!isCursorLocked)
             return;
 
-        yaw += Input.GetAxis("Mouse X") * mouseSensitivity;
-        pitch -= Input.GetAxis("Mouse Y") * mouseSensitivity;
-        pitch = Mathf.Clamp(pitch, minimumPitch, maximumPitch);
+        float sensitivity = mouseSensitivity * GameSettings.CameraSensitivity;
+        float horizontalDirection = GameSettings.InvertCameraX ? -1f : 1f;
+        float verticalDirection = GameSettings.InvertCameraY ? -1f : 1f;
+        if (tutorialLookAllowed)
+        {
+            float mouseX = Input.GetAxis("Mouse X");
+            float mouseY = Input.GetAxis("Mouse Y");
+            if (Mathf.Abs(mouseX) > 0.01f || Mathf.Abs(mouseY) > 0.01f)
+                TutorialLookInputDetected = true;
 
-        bool resetZoom = Input.GetMouseButtonDown(2)
-            || Input.GetKeyDown(KeyCode.Return)
+            yaw += mouseX * sensitivity * horizontalDirection;
+            pitch -= mouseY * sensitivity * verticalDirection;
+            pitch = Mathf.Clamp(pitch, minimumPitch, maximumPitch);
+        }
+
+        bool middleMouseReset = Input.GetMouseButtonDown(2);
+        bool keyboardReset = Input.GetKeyDown(KeyCode.Return)
             || Input.GetKeyDown(KeyCode.KeypadEnter);
-        if (resetZoom)
+        if (tutorialZoomResetAllowed && (middleMouseReset || keyboardReset))
         {
             distance = Mathf.Clamp(startingDistance, minimumDistance, maximumDistance);
+            if (TutorialZoomInUsed && TutorialZoomOutUsed)
+                TutorialZoomResetUsed = true;
         }
-        else
+        else if (tutorialZoomAllowed)
         {
             float scroll = Input.GetAxis("Mouse ScrollWheel");
+            if (scroll > 0.001f)
+                TutorialZoomInUsed = true;
+            else if (scroll < -0.001f)
+                TutorialZoomOutUsed = true;
+
             distance = Mathf.Clamp(distance - scroll * zoomSpeed, minimumDistance, maximumDistance);
         }
     }
@@ -241,3 +281,4 @@ public class ThirdPersonCameraController : MonoBehaviour
         return angle > 180f ? angle - 360f : angle;
     }
 }
+

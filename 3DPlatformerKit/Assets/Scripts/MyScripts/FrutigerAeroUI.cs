@@ -131,7 +131,7 @@ public static class FrutigerAeroUI
                 lastHoveredGlassButtonId = buttonId;
                 bool isPointerMove = eventType != EventType.MouseDown && eventType != EventType.MouseUp;
                 if (!clicked && isPointerMove && hoverSound != null && hoverAudioSource != null)
-                    hoverAudioSource.PlayOneShot(hoverSound, Mathf.Clamp01(hoverSoundVolume));
+                    GameSettings.PlaySfx(hoverAudioSource, hoverSound, hoverSoundVolume);
             }
         }
         else if (lastHoveredGlassButtonId == buttonId)

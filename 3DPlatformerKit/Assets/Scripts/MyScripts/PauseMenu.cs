@@ -24,6 +24,7 @@ public class PauseMenu : MonoBehaviour
     [SerializeField] private AudioSource uiSoundSource;
 
     private bool isPaused;
+    private bool settingsOpen;
     public bool IsPaused => isPaused;
 
     private bool wasCameraEnabled;
@@ -59,6 +60,14 @@ public class PauseMenu : MonoBehaviour
         if (!Input.GetKeyDown(KeyCode.Escape))
             return;
 
+        if (settingsOpen)
+        {
+            settingsOpen = false;
+            GameSettings.Save();
+            FrutigerAeroUI.ResetGlassButtonHover();
+            return;
+        }
+
         if (isPaused)
             ResumeGame();
         else
@@ -75,10 +84,22 @@ public class PauseMenu : MonoBehaviour
         GUI.depth = -100;
 
         FrutigerAeroUI.DrawPauseBackdrop();
+        if (settingsOpen)
+        {
+            if (GameSettings.DrawSettingsMenu())
+            {
+                settingsOpen = false;
+                GameSettings.Save();
+                FrutigerAeroUI.ResetGlassButtonHover();
+            }
+
+            GUI.depth = previousDepth;
+            return;
+        }
 
         float scale = Mathf.Clamp(Mathf.Min(Screen.width / 1100f, Screen.height / 720f), 0.68f, 1.12f);
         float panelWidth = Mathf.Min(500f * scale, Screen.width - 28f);
-        float panelHeight = Mathf.Min(470f * scale, Screen.height - 28f);
+        float panelHeight = Mathf.Min(540f * scale, Screen.height - 28f);
         Rect panel = new Rect((Screen.width - panelWidth) * 0.5f, (Screen.height - panelHeight) * 0.5f,
             panelWidth, panelHeight);
 
@@ -99,8 +120,8 @@ public class PauseMenu : MonoBehaviour
             panel.width * 0.6f, 3f * scale), new Color(0.12f, 0.65f, 0.82f, 0.32f));
 
         float buttonWidth = panelWidth * 0.72f;
-        float buttonHeight = 55f * scale;
-        float gap = 14f * scale;
+        float buttonHeight = 48f * scale;
+        float gap = 10f * scale;
         float buttonX = panel.x + (panelWidth - buttonWidth) * 0.5f;
         float buttonY = panel.y + 181f * scale;
 
@@ -110,6 +131,16 @@ public class PauseMenu : MonoBehaviour
         {
             PlayUiSound(menuButtonClickSound);
             ResumeGame();
+        }
+
+        buttonY += buttonHeight + gap;
+        if (FrutigerAeroUI.DrawGlassButton(new Rect(buttonX, buttonY, buttonWidth, buttonHeight),
+                "SETTINGS", buttonStyle, FrutigerAeroUI.Cyan, false,
+                menuButtonHoverSound, uiSoundSource, menuButtonHoverVolume))
+        {
+            PlayUiSound(menuButtonClickSound);
+            settingsOpen = true;
+            FrutigerAeroUI.ResetGlassButtonHover();
         }
 
         buttonY += buttonHeight + gap;
@@ -240,8 +271,7 @@ public class PauseMenu : MonoBehaviour
     }
     private void PlayUiSound(AudioClip clip)
     {
-        if (clip != null && uiSoundSource != null)
-            uiSoundSource.PlayOneShot(clip, pauseSoundVolume);
+        GameSettings.PlaySfx(uiSoundSource, clip, pauseSoundVolume);
     }
 
     private void EnsureStyles()

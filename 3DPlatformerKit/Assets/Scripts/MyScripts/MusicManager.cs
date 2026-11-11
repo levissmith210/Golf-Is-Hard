@@ -11,7 +11,9 @@ public class MusicManager : MonoBehaviour
     [Tooltip("The song that loops while the start menu is visible.")]
     [SerializeField] private AudioClip menuSong;
 
-    [Header("Pause Mix")]
+    [Header("Music Levels")]
+    [Tooltip("Overall music level before the Music slider; set slightly lower than sound effects by default.")]
+    [SerializeField, Range(0.25f, 1f)] private float musicLevelMultiplier = 0.6f;
     [Tooltip("Music volume multiplier while the pause menu is open.")]
     [SerializeField, Range(0f, 1f)] private float pausedVolumeMultiplier = 0.15f;
     [Tooltip("Time in seconds for the music to return to normal volume after unpausing.")]
@@ -26,6 +28,18 @@ public class MusicManager : MonoBehaviour
     private int nextGameplaySongIndex;
     private float normalMusicVolume = 1f;
     private Coroutine volumeFadeCoroutine;
+    private bool isPaused;
+
+    private void OnEnable()
+    {
+        GameSettings.MusicVolumeChanged += HandleMusicVolumeChanged;
+    }
+
+    private void OnDisable()
+    {
+        GameSettings.MusicVolumeChanged -= HandleMusicVolumeChanged;
+        StopVolumeFade();
+    }
 
     private void Awake()
     {
@@ -34,12 +48,24 @@ public class MusicManager : MonoBehaviour
         musicSource.spatialBlend = 0f;
         musicSource.ignoreListenerPause = true;
         normalMusicVolume = musicSource.volume;
+        musicSource.volume = GetNormalMusicVolume();
         musicSource.Stop();
     }
 
     private void Update()
     {
-        if (!playingGameplayMusic || musicSource == null)
+        if (musicSource == null)
+            return;
+
+        // Keep the live title-menu song synced with its slider as well as gameplay music.
+        if (volumeFadeCoroutine == null)
+        {
+            float targetVolume = isPaused ? GetPausedMusicVolume() : GetNormalMusicVolume();
+            if (!Mathf.Approximately(musicSource.volume, targetVolume))
+                musicSource.volume = targetVolume;
+        }
+
+        if (!playingGameplayMusic)
             return;
 
         if (!musicSource.isPlaying)
@@ -53,24 +79,21 @@ public class MusicManager : MonoBehaviour
         if (musicSource == null)
             return;
 
-        if (volumeFadeCoroutine != null)
-        {
-            StopCoroutine(volumeFadeCoroutine);
-            volumeFadeCoroutine = null;
-        }
+        isPaused = paused;
+        StopVolumeFade();
 
-        if (paused)
+        if (isPaused)
         {
-            musicSource.volume = normalMusicVolume * pausedVolumeMultiplier;
+            musicSource.volume = GetPausedMusicVolume();
             return;
         }
 
-        if (Mathf.Approximately(musicSource.volume, normalMusicVolume))
+        if (Mathf.Approximately(musicSource.volume, GetNormalMusicVolume()))
             return;
 
         if (resumeVolumeFadeDuration <= 0f)
         {
-            musicSource.volume = normalMusicVolume;
+            musicSource.volume = GetNormalMusicVolume();
             return;
         }
 
@@ -87,11 +110,60 @@ public class MusicManager : MonoBehaviour
         {
             elapsed += Time.unscaledDeltaTime;
             float progress = Mathf.Clamp01(elapsed / duration);
-            musicSource.volume = Mathf.Lerp(startVolume, normalMusicVolume, Mathf.SmoothStep(0f, 1f, progress));
+            musicSource.volume = Mathf.Lerp(startVolume, GetNormalMusicVolume(), Mathf.SmoothStep(0f, 1f, progress));
             yield return null;
         }
 
-        musicSource.volume = normalMusicVolume;
+        musicSource.volume = GetNormalMusicVolume();
+        volumeFadeCoroutine = null;
+    }
+
+    private float GetNormalMusicVolume()
+    {
+        return normalMusicVolume * musicLevelMultiplier * GameSettings.MusicVolume;
+    }
+
+    private float GetPausedMusicVolume()
+    {
+        return GetNormalMusicVolume() * pausedVolumeMultiplier;
+    }
+
+    private void HandleMusicVolumeChanged()
+    {
+        if (musicSource == null)
+            return;
+
+        if (isPaused)
+        {
+            StopVolumeFade();
+            musicSource.volume = GetPausedMusicVolume();
+            return;
+        }
+
+        if (volumeFadeCoroutine != null)
+        {
+            StopVolumeFade();
+            if (resumeVolumeFadeDuration > 0f
+                && !Mathf.Approximately(musicSource.volume, GetNormalMusicVolume()))
+            {
+                volumeFadeCoroutine = StartCoroutine(FadeVolumeToNormal());
+            }
+            else
+            {
+                musicSource.volume = GetNormalMusicVolume();
+            }
+            return;
+        }
+
+        musicSource.volume = GetNormalMusicVolume();
+    }
+
+    private void StopVolumeFade()
+    {
+        if (volumeFadeCoroutine == null)
+            return;
+
+        StopCoroutine(volumeFadeCoroutine);
         volumeFadeCoroutine = null;
     }
 
