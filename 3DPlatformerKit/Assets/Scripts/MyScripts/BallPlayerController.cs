@@ -48,6 +48,38 @@ public class BallPlayerController : MonoBehaviour
     [Tooltip("Extra gravity while airborne. Values above 1 shorten the floaty part of lofted shots.")]
     [SerializeField, Range(1f, 2f)] private float airborneGravityMultiplier = 1.2f;
 
+    [Header("Distance & Surfaces")]
+    [Tooltip("Multiplies every shot's launch speed. 1 = original distance. Carry grows roughly with the square of this.")]
+    [SerializeField, Range(0.5f, 2f)] private float shotDistanceBoost = 1.25f;
+    [Tooltip("Scales Grounded Rolling Drag on ground with no surface info (lower = rolls further).")]
+    [SerializeField, Range(0.1f, 2f)] private float defaultRollDragScale = 0.6f;
+    [Tooltip("Let the surface under the ball (fairway, rough, sand, green...) change shot power, roll and landing.")]
+    [SerializeField] private bool useSurfaceFeel = true;
+    [SerializeField] private SurfaceFeel fairwayFeel = new SurfaceFeel(1.0f, 0.45f, 0.75f);
+    [SerializeField] private SurfaceFeel roughFeel = new SurfaceFeel(0.72f, 1.15f, 0.6f);
+    [SerializeField] private SurfaceFeel sandFeel = new SurfaceFeel(0.5f, 2.8f, 0.22f);
+    [SerializeField] private SurfaceFeel greenFeel = new SurfaceFeel(0.8f, 0.28f, 0.75f);
+    [SerializeField] private SurfaceFeel teeFeel = new SurfaceFeel(1.0f, 0.45f, 0.75f);
+    [SerializeField] private SurfaceFeel hardFeel = new SurfaceFeel(1.0f, 0.2f, 1.0f);
+    [SerializeField] private bool showLieBadge = true;
+
+    [System.Serializable]
+    public class SurfaceFeel
+    {
+        [Tooltip("Shot power when hitting from this surface (1 = full).")]
+        [Range(0.1f, 1.5f)] public float shotPower = 1f;
+        [Tooltip("Rolling drag while on this surface (higher stops sooner).")]
+        [Range(0f, 4f)] public float rollingDrag = 0.4f;
+        [Tooltip("Fraction of speed kept when the ball lands on this surface (sand grabs the ball).")]
+        [Range(0.05f, 1f)] public float landingKeep = 1f;
+
+        public SurfaceFeel() { }
+        public SurfaceFeel(float power, float drag, float keep) { shotPower = power; rollingDrag = drag; landingKeep = keep; }
+    }
+
+    /// <summary>The surface the ball is resting or rolling on (last known while airborne).</summary>
+    public AeroSurfaceType CurrentSurface { get; private set; }
+
     [Header("Shot Direction")]
     [Tooltip("Hold W to raise the shot and S to lower it. The allowed range is 0 to 50 degrees.")]
     [SerializeField, Range(0f, 50f)] private float shotElevationDegrees;
@@ -422,12 +454,88 @@ public class BallPlayerController : MonoBehaviour
             return;
         }
 
-        if (groundedRollingDrag <= 0f || !IsTouchingGround())
+        UpdateSurface();
+        float rollingDrag = CurrentRollingDrag();
+        if (rollingDrag <= 0f || !IsTouchingGround())
             return;
 
         Vector3 horizontalVelocity = Vector3.ProjectOnPlane(GetBallVelocity(), Vector3.up);
         if (horizontalVelocity.sqrMagnitude > 0.0025f)
-            ballRigidbody.AddForce(-horizontalVelocity * groundedRollingDrag, ForceMode.Acceleration);
+            ballRigidbody.AddForce(-horizontalVelocity * rollingDrag, ForceMode.Acceleration);
+    }
+
+    private float BallRadius
+    {
+        get
+        {
+            if (ballCollider == null) ballCollider = GetComponent<Collider>();
+            return ballCollider != null ? ballCollider.bounds.extents.y : 0.25f;
+        }
+    }
+
+    /// <summary>Reads the surface under the ball from whatever ground it is touching.</summary>
+    private void UpdateSurface()
+    {
+        if (!useSurfaceFeel) { CurrentSurface = AeroSurfaceType.Default; return; }
+        foreach (Collider collider in groundedColliders)
+        {
+            if (collider == null || !collider.enabled || !collider.gameObject.activeInHierarchy) continue;
+            CurrentSurface = AeroSurface.Lookup(collider, transform.position + Vector3.down * BallRadius);
+            return;
+        }
+    }
+
+    private SurfaceFeel FeelFor(AeroSurfaceType surface)
+    {
+        switch (surface)
+        {
+            case AeroSurfaceType.Fairway: return fairwayFeel;
+            case AeroSurfaceType.Rough: return roughFeel;
+            case AeroSurfaceType.Sand: return sandFeel;
+            case AeroSurfaceType.Green: return greenFeel;
+            case AeroSurfaceType.Tee: return teeFeel;
+            case AeroSurfaceType.Hard: return hardFeel;
+            default: return null;
+        }
+    }
+
+    private float CurrentRollingDrag()
+    {
+        SurfaceFeel feel = useSurfaceFeel ? FeelFor(CurrentSurface) : null;
+        return feel != null ? feel.rollingDrag : groundedRollingDrag * defaultRollDragScale;
+    }
+
+    /// <summary>Shot power multiplier from the lie (rough and sand take power off).</summary>
+    private float LiePowerMultiplier()
+    {
+        SurfaceFeel feel = useSurfaceFeel ? FeelFor(CurrentSurface) : null;
+        return feel != null ? feel.shotPower : 1f;
+    }
+
+    /// <summary>Soft surfaces grab the ball when it lands (sand plugs it, rough deadens it).</summary>
+    private void ApplyLandingFeel(Collision collision)
+    {
+        if (!useSurfaceFeel || isReplacingMomentum || collision.relativeVelocity.magnitude < 2.5f)
+            return;
+        ContactPoint[] contacts = collision.contacts;
+        for (int i = 0; i < contacts.Length; i++)
+        {
+            if (Vector3.Dot(contacts[i].normal, Vector3.up) < minimumGroundUpDot) continue;
+            SurfaceFeel feel = FeelFor(AeroSurface.Lookup(collision.collider, contacts[i].point));
+            if (feel == null || feel.landingKeep >= 0.999f) return;
+            SetBallVelocity(GetBallVelocity() * feel.landingKeep);
+            ballRigidbody.angularVelocity *= feel.landingKeep;
+            return;
+        }
+    }
+
+    private void SetBallVelocity(Vector3 velocity)
+    {
+#if UNITY_6000_0_OR_NEWER
+        ballRigidbody.linearVelocity = velocity;
+#else
+        ballRigidbody.velocity = velocity;
+#endif
     }
 
     private void LateUpdate()
@@ -458,7 +566,9 @@ public class BallPlayerController : MonoBehaviour
             return;
         }
 
-        float shotForce = Mathf.Lerp(minimumShotForce, maximumShotForce, power) * shotForceMultiplier;
+        UpdateSurface();
+        float shotForce = Mathf.Lerp(minimumShotForce, maximumShotForce, power) * shotForceMultiplier
+            * shotDistanceBoost * LiePowerMultiplier();
         Vector3 shotDirection = GetShotDirection();
         StrokeCount++;
         lastShotDirection = shotDirection;
@@ -575,6 +685,7 @@ public class BallPlayerController : MonoBehaviour
     private void OnCollisionEnter(Collision collision)
     {
         UpdateGroundContact(collision);
+        ApplyLandingFeel(collision);
         PlayImpactSound(collision);
     }
 
@@ -648,6 +759,38 @@ public class BallPlayerController : MonoBehaviour
 
         if (showAngleIndicator)
             DrawAngleIndicator();
+
+    }
+
+    private GUIStyle lieStyle;
+
+    /// <summary>Small glass badge (bottom-left) showing the lie while the ball is at rest.</summary>
+    private void DrawLieBadge()
+    {
+        if (!showLieBadge || !useSurfaceFeel || holeCompleted || ballRigidbody == null || ballRigidbody.isKinematic)
+            return;
+        SurfaceFeel feel = FeelFor(CurrentSurface);
+        if (feel == null || !IsTouchingGround() || GetBallVelocity().magnitude > 0.35f)
+            return;
+
+        float s = HudScale;
+        int fontSize = Mathf.Max(11, Mathf.RoundToInt(15f * s));
+        if (lieStyle == null) lieStyle = FrutigerAeroUI.CreateStyle(fontSize, FrutigerAeroUI.Ink);
+        lieStyle.fontSize = fontSize;
+        string text = AeroSurface.Label(CurrentSurface);
+        float w = lieStyle.CalcSize(new GUIContent(text)).x + 34f * s, h = 34f * s;
+        Rect r = new Rect(18f * s, Screen.height - HudBottomOffset - h, w, h);
+        Color accent;
+        switch (CurrentSurface)
+        {
+            case AeroSurfaceType.Sand: accent = new Color(1f, 0.82f, 0.45f); break;
+            case AeroSurfaceType.Rough: accent = new Color(0.25f, 0.72f, 0.35f); break;
+            case AeroSurfaceType.Green: accent = new Color(0.55f, 0.95f, 0.4f); break;
+            case AeroSurfaceType.Hard: accent = FrutigerAeroUI.Cyan; break;
+            default: accent = new Color(0.4f, 0.86f, 0.32f); break;
+        }
+        FrutigerAeroUI.DrawGlassPanel(r, accent, new Color(0.86f, 0.98f, 1f, 0.92f), 0.16f);
+        GUI.Label(new Rect(r.x + 17f * s, r.y, r.width - 20f * s, r.height), text, lieStyle);
     }
 
     private float HudScale

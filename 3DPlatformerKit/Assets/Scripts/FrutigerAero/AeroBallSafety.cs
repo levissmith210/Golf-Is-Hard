@@ -51,8 +51,15 @@ public class AeroBallSafety : MonoBehaviour
         }
     }
 
+    // floating in water while waiting to be returned
+    private bool floating;
+    private float floatSurfaceY;
+
     private void FixedUpdate()
     {
+        if (floating && body != null && !body.isKinematic)
+            Float();
+
         if (resetting || body == null || body.isKinematic)
             return;
 
@@ -77,6 +84,26 @@ public class AeroBallSafety : MonoBehaviour
             StartCoroutine(ReturnRoutine(0f, 1, "Out of bounds!"));
     }
 
+    /// <summary>Buoyancy: ease the ball up to the waterline, bob gently, and let water drag slow its drift and spin.</summary>
+    private void Float()
+    {
+        float target = floatSurfaceY - Radius * 0.35f + Mathf.Sin(Time.time * 3.2f) * 0.035f;
+        Vector3 v = Velocity;
+        float vy = Mathf.Lerp(v.y, (target - body.position.y) * 6f, 0.25f);
+        Vector3 drift = new Vector3(v.x, 0f, v.z) * 0.94f;
+        SetVelocity(new Vector3(drift.x, vy, drift.z));
+        body.angularVelocity *= 0.9f;
+    }
+
+    private void SetVelocity(Vector3 v)
+    {
+#if UNITY_6000_0_OR_NEWER
+        body.linearVelocity = v;
+#else
+        body.velocity = v;
+#endif
+    }
+
     private bool Grounded()
     {
         return Physics.Raycast(body.position, Vector3.down, Radius + 0.12f, ~0, QueryTriggerInteraction.Ignore);
@@ -88,7 +115,8 @@ public class AeroBallSafety : MonoBehaviour
         if (hazard == null) return;
         hazardContacts++;
         if (!resetting && ball.enabled)
-            StartCoroutine(ReturnRoutine(hazard.resetDelay, hazard.penaltyStrokes, hazard.label));
+            StartCoroutine(ReturnRoutine(hazard.resetDelay, hazard.penaltyStrokes, hazard.label,
+                hazard.floats ? hazard.WaterSurfaceY : float.NaN));
     }
 
     private void OnTriggerExit(Collider other)
@@ -97,13 +125,24 @@ public class AeroBallSafety : MonoBehaviour
             hazardContacts = Mathf.Max(0, hazardContacts - 1);
     }
 
-    private IEnumerator ReturnRoutine(float delay, int penalty, string label)
+    private IEnumerator ReturnRoutine(float delay, int penalty, string label, float waterSurfaceY = float.NaN)
     {
         resetting = true;
         message = penalty > 0 ? $"{label}  +{penalty} stroke" : label;
         messageUntil = Time.time + delay + messageSeconds;
+        if (!float.IsNaN(waterSurfaceY) && body != null)
+        {
+            floating = true;
+            floatSurfaceY = waterSurfaceY;
+            body.useGravity = false; // buoyancy takes over (also stops the ball's extra airborne gravity)
+        }
         if (delay > 0f)
             yield return new WaitForSeconds(delay);
+        if (floating)
+        {
+            floating = false;
+            if (body != null) body.useGravity = true;
+        }
 
         // The hole may have been finished or restarted while we waited.
         if (ball.enabled && (hasSafeSpot || hasTeeSpot))

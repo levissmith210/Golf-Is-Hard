@@ -837,6 +837,7 @@ public class IslandDef
     public List<Corridor> clamps = new List<Corridor>();
     public string name;
     public float landH = 1.0f, roll = 1f, greenRaise = 0.30f;
+    public float beachLevel = 0.7f; // ground below this (natural height) is painted as beach
     public List<LandPath> paths = new List<LandPath>();
     public List<Blob> land = new List<Blob>(), fair = new List<Blob>(), bunkers = new List<Blob>(),
         ponds = new List<Blob>(), bumps = new List<Blob>(), flats = new List<Blob>(), cuts = new List<Blob>();
@@ -944,6 +945,20 @@ public static class AeroIsland
     static readonly Color Shallow = new Color(0.70f, 0.95f, 0.88f);
     static readonly Color Deep = new Color(0.30f, 0.72f, 0.80f);
 
+    /// <summary>Surface type at a point, using the same thresholds the painter uses, so what you see is what the ball feels.</summary>
+    public static AeroSurfaceType Classify(IslandDef d, float x, float z)
+    {
+        if (d.BunkerT(x, z) > 0.0f) return AeroSurfaceType.Sand;
+        float h = d.HeightNatural(x, z);
+        if (AeroKit.Smooth(d.beachLevel, d.beachLevel - 0.45f, h) > 0.5f) return AeroSurfaceType.Sand; // beach
+        if (d.ponds.Count > 0 && d.PondT(x, z) > -0.12f && d.ProtectT(x, z) < 0f) return AeroSurfaceType.Sand; // sandy pond rims
+        if (d.TeeT(x, z) > 0f) return AeroSurfaceType.Tee;
+        float gT = d.GreenT(x, z);
+        if (gT > 0f) return AeroSurfaceType.Green;
+        if (gT > -0.16f || d.FairT(x, z) > 0.01f) return AeroSurfaceType.Fairway; // fairway and the green's collar
+        return AeroSurfaceType.Rough;
+    }
+
     static Color Paint(IslandDef d, float x, float z)
     {
         float h = d.HeightNatural(x, z);
@@ -962,7 +977,7 @@ public static class AeroIsland
         c = Color.Lerp(c, Sand, AeroKit.Smooth(-0.10f, 0.08f, bT));
 
         // beach near the sea
-        c = Color.Lerp(c, Beach, AeroKit.Smooth(0.7f, 0.25f, h));
+        c = Color.Lerp(c, Beach, AeroKit.Smooth(d.beachLevel, d.beachLevel - 0.45f, h));
         // sandy pond rims, then underwater tint
         if (pT > -0.3f)
         {
@@ -1052,6 +1067,15 @@ public static class AeroIsland
         AeroKit.AddGrassDetail(mat, new Vector2((x1 - x0) / 2f, (z1 - z0) / 2f));
 
         var go = AeroKit.MeshObject(d.name + " Ground", parent, mesh, mat, true);
+
+        // surface map for the ball: same zones as the paint (fairway, rough, green, tee, sand/beach)
+        const float sc = 0.6f;
+        int mw = Mathf.CeilToInt((x1 - x0) / sc), mh = Mathf.CeilToInt((z1 - z0) / sc);
+        var cells = new byte[mw * mh];
+        for (int j = 0; j < mh; j++)
+            for (int i = 0; i < mw; i++)
+                cells[j * mw + i] = (byte)Classify(d, x0 + (i + 0.5f) * sc, z0 + (j + 0.5f) * sc);
+        go.AddComponent<AeroSurfaceMap>().Configure(x0, z0, sc, mw, mh, cells);
 
         if (d.hasCup)
         {

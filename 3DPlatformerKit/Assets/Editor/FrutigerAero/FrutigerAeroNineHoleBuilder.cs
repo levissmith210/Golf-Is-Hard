@@ -19,6 +19,7 @@ public static class FrutigerAeroNineHoleBuilder
     private const string CupPrefab = "Assets/Models/FrutigerAeroGolfHole/FrutigerAeroGolfHole.prefab";
     private const string TeePrefab = "Assets/Models/ClassicWhiteGolfTee/ClassicWhiteGolfTee.prefab";
     private const float RingR = 430f;
+    public const float BallScale = 0.3f; // the ball is always this size in every scene
 
     private class HoleInfo { public int number, par; public string title; public Transform root, tee, cup, view; }
     private static List<HoleInfo> holes;
@@ -116,10 +117,20 @@ public static class FrutigerAeroNineHoleBuilder
     [MenuItem("Tools/Golf is Hard/Build Frutiger Aero Nine Hole Course")]
     public static void Build()
     {
+        // building replaces the open scene, so never throw away someone's unsaved work
+        for (int i = 0; i < SceneManager.sceneCount; i++)
+        {
+            var open = SceneManager.GetSceneAt(i);
+            if (open.isDirty && open.path != ScenePath)
+            {
+                Debug.LogError($"Not building: '{open.name}' has unsaved changes. Save it first.");
+                return;
+            }
+        }
         Begin(RootFolder);
         rng = new System.Random(2026);
         holes = new List<HoleInfo>();
-        torusCache.Clear(); tracked.Clear(); waterfallPaths.Clear(); keepouts.Clear();
+        torusCache.Clear(); tracked.Clear(); waterfallPaths.Clear(); keepouts.Clear(); existingSun = null;
         MakeSharedTextures();
         MakeMaterials();
 
@@ -140,6 +151,7 @@ public static class FrutigerAeroNineHoleBuilder
             cam.transform.SetPositionAndRotation(v.position, v.rotation);
         }
         AddHazards(env);
+        TagSurfaces();
 
         EditorSceneManager.MarkSceneDirty(scene);
         EditorSceneManager.SaveScene(scene, ScenePath);
@@ -147,6 +159,213 @@ public static class FrutigerAeroNineHoleBuilder
         var sb = new System.Text.StringBuilder("Aero Isles built: ");
         foreach (var h in holes) sb.Append($"[{h.number} {h.title} par {h.par}] ");
         Debug.Log(sb.ToString());
+    }
+
+    // ===================================================================== tutorial scene restyle
+    /// <summary>
+    /// Restyles the open tutorial scene (the one with "Tutorial Holes") to match Aero Isles. Every floor, wall,
+    /// cup and tee stays exactly where it is, so the tutorial plays the same. Safe to run again: it replaces
+    /// its own previous output. The scene is marked dirty but not saved.
+    /// </summary>
+    [MenuItem("Tools/Golf is Hard/Restyle Open Tutorial Scene (Aero Isles)")]
+    public static string RestyleTutorialScene()
+    {
+        var tut = GameObject.Find("Tutorial Holes");
+        if (tut == null) return "No 'Tutorial Holes' object in the open scene.";
+        scene = SceneManager.GetActiveScene();
+        Begin(RootFolder);
+        rng = new System.Random(77);
+        holes = new List<HoleInfo>();
+        torusCache.Clear(); tracked.Clear(); waterfallPaths.Clear(); keepouts.Clear();
+        if (!LoadSharedTextures()) MakeSharedTextures();
+        MakeMaterials();
+
+        // clear anything a previous run made
+        foreach (var n in new[] { "Aero Environment", "Aero Tutorial Isle" }) { var old = GameObject.Find(n); if (old != null) Object.DestroyImmediate(old); }
+        var oldRails = new List<GameObject>();
+        foreach (var t in tut.GetComponentsInChildren<Transform>(true)) if (t.name == "Aero Rail") oldRails.Add(t.gameObject);
+        foreach (var g in oldRails) Object.DestroyImmediate(g);
+
+        // sky, sea, clouds, haze, post-processing; the scene's own directional light becomes the sun
+        existingSun = null;
+        foreach (var l in Object.FindObjectsByType<Light>(FindObjectsInactive.Exclude, FindObjectsSortMode.None))
+            if (l.type == LightType.Directional && l.gameObject.scene == scene) { existingSun = l; break; }
+        var env = new GameObject("Aero Environment").transform;
+        BuildEnvironment(env);
+        existingSun = null;
+        AddHazards(env);
+
+        var cam = Camera.main;
+        if (cam != null)
+        {
+            cam.farClipPlane = 3000f;
+            var ucd = cam.GetComponent<UniversalAdditionalCameraData>();
+            if (ucd == null) ucd = cam.gameObject.AddComponent<UniversalAdditionalCameraData>();
+            ucd.renderPostProcessing = true;
+        }
+        var ballCtl = Object.FindFirstObjectByType<BallPlayerController>();
+        if (ballCtl != null && ballCtl.GetComponent<AeroBallSafety>() == null) ballCtl.gameObject.AddComponent<AeroBallSafety>();
+        if (ballCtl != null) ballCtl.transform.localScale = Vector3.one * BallScale;
+
+        // restyle the lanes: striped fairway floors, glossy pearl walls with rounded aqua bumper rails
+        var laneTex = LaneTexture();
+        var laneMat = Lit("Tutorial_Lane", Color.white, 0.4f);
+        laneMat.SetTexture("_BaseMap", laneTex);
+        AddGrassDetail(laneMat, new Vector2(20f, 5f));
+        var platMat = Lit("Tutorial_Platform", Color.white, 0.4f);
+        platMat.SetTexture("_BaseMap", laneTex);
+        platMat.SetTextureScale("_BaseMap", new Vector2(0.3f, 1f));
+        AddGrassDetail(platMat, new Vector2(6f, 5f));
+
+        var isle = new GameObject("Aero Tutorial Isle").transform;
+        var railGroup = Group("Lane Rails", isle).transform; // unscaled parent, so rails keep exact world sizes
+        // low, flat island: grass down to a thin beach at the waterline
+        var d = new IslandDef { name = "Tutorial_Isle", landH = 0.35f, roll = 0.6f, beachLevel = 0.1f, texPerUnit = 8f };
+        var lanes = new List<(Transform hole, Bounds b, List<Vector3> path)>();
+        Bounds all = new Bounds();
+        bool first = true;
+        foreach (Transform hole in tut.transform)
+        {
+            var body = hole.Find("CourseBody");
+            if (body == null) continue;
+            Bounds lb = new Bounds(); bool lf = true;
+            foreach (var r in body.GetComponentsInChildren<MeshRenderer>(true))
+            {
+                string mn = r.sharedMaterial != null ? r.sharedMaterial.name : "";
+                bool floor = mn.StartsWith("Grass") || mn.StartsWith("Tutorial_");
+                bool wall = mn == "WhiteMaterial" || mn == "Pearl";
+                if (floor)
+                    r.sharedMaterial = r.bounds.size.x < 20f ? platMat : laneMat;
+                else if (wall)
+                {
+                    r.sharedMaterial = mPearl;
+                    var b = r.bounds;
+                    bool alongX = b.size.x >= b.size.z;
+                    float len = alongX ? b.size.x : b.size.z;
+                    // rounded bumper rail along the wall top: an even tube with ball ends (a stretched capsule would taper)
+                    var top = new Vector3(b.center.x, b.max.y, b.center.z);
+                    var axis = alongX ? Vector3.right : Vector3.forward;
+                    float tubeLen = Mathf.Max(0.1f, len - 0.6f);
+                    Prim(PrimitiveType.Cylinder, "Aero Rail", railGroup, top, new Vector3(0.6f, tubeLen * 0.5f, 0.6f), mAqua, false, true,
+                        alongX ? Quaternion.Euler(0f, 0f, 90f) : Quaternion.Euler(90f, 0f, 0f));
+                    Prim(PrimitiveType.Sphere, "Aero Rail End", railGroup, top + axis * (tubeLen * 0.5f), Vector3.one * 0.6f, mAqua, false);
+                    Prim(PrimitiveType.Sphere, "Aero Rail End", railGroup, top - axis * (tubeLen * 0.5f), Vector3.one * 0.6f, mAqua, false);
+                }
+                if (!r.enabled) continue;
+                if (lf) { lb = r.bounds; lf = false; } else lb.Encapsulate(r.bounds);
+            }
+            if (lf) continue;
+            if (first) { all = lb; first = false; } else all.Encapsulate(lb);
+            var path = new List<Vector3> { new Vector3(lb.min.x - 0.3f, 0.18f, lb.center.z), new Vector3(lb.center.x, 0.18f, lb.center.z), new Vector3(lb.max.x + 0.3f, 0.18f, lb.center.z) };
+            lanes.Add((hole, lb, path));
+        }
+        if (first) return "No lane geometry found under Tutorial Holes/*/CourseBody.";
+
+        // one island under both lanes; the ground is carved to sit just under each lane floor and dug out under low cups
+        d.land.Add(new Blob(all.center.x, all.center.z, all.extents.x + 18f, all.extents.z + 18f));
+        foreach (var ln in lanes)
+        {
+            Carve(d, isle, ln.hole.name + " lane", ln.path, ln.b.extents.z + 0.6f, 0.06f, 3f);
+            KeepOutPath(ln.path, ln.b.extents.z + 1.0f, 1f, 9f);
+            var cutter = ln.hole.GetComponentInChildren<GolfHoleAutoCutter>(true);
+            if (cutter != null && cutter.transform.position.y < 1.5f)
+            {
+                var c = cutter.transform.position;
+                Carve(d, isle, ln.hole.name + " cup", new List<Vector3> { c + Vector3.left * 0.6f, c + Vector3.right * 0.6f }, 1.5f, 1.3f, 0.6f);
+            }
+        }
+        AeroIsland.Build(d, isle, mWater);
+
+        // signs beside each tutorial tee
+        string[] titles = { "Rolling Shot", "Angle Shot", "Practice", "Practice" };
+        int idx = 0;
+        foreach (var ln in lanes)
+        {
+            var tee = ln.hole.GetComponentInChildren<GolfTeeSpawnPoint>(true);
+            if (tee == null) { idx++; continue; }
+            var tp = tee.transform.position;
+            float sx = tp.x + 1.5f, sz = ln.b.max.z + 3.2f;
+            var info = new HoleInfo { number = idx + 1, title = titles[Mathf.Min(idx, titles.Length - 1)], par = 2, root = isle };
+            var viewer = new Vector3(tp.x - 14f, 0f, tp.z);
+            HoleSign(isle, info, new Vector3(sx, d.Height(sx, sz), sz), Yaw(new Vector3(sx, 0f, sz) - viewer), "TUTORIAL");
+            KeepOutPath(new List<Vector3> { new Vector3(sx, 0f, sz) }, 2.4f, 2f, 5f);
+            idx++;
+        }
+
+        Dress(d, isle, 46, 110);
+        Bubbles(isle, new Vector3(all.center.x, 3f, all.center.z), new Vector3(all.extents.x + 14f, 12f, all.extents.z + 14f), 20);
+        CloudPuff(isle, new Vector3(all.center.x - 40f, 55f, all.center.z + 120f), 1.4f);
+        CloudPuff(isle, new Vector3(all.center.x + 60f, 70f, all.center.z - 110f), 1.2f);
+        TagSurfaces();
+
+        EditorSceneManager.MarkSceneDirty(scene);
+        return $"Restyled {lanes.Count} tutorial lanes in {scene.name} (not saved).";
+    }
+
+    /// <summary>
+    /// Gives every playable collider in the open scene a surface type for the ball (islands carry a baked map instead):
+    /// tees, cups and greens, fairway-like pads and lanes, grassy rims as rough, everything else (glass, pearl, pipes) as hard.
+    /// </summary>
+    public static string TagSurfaces()
+    {
+        int tagged = 0;
+        var counts = new Dictionary<AeroSurfaceType, int>();
+        foreach (var c in Object.FindObjectsByType<Collider>(FindObjectsInactive.Exclude, FindObjectsSortMode.None))
+        {
+            if (c.isTrigger || c.gameObject.scene != SceneManager.GetActiveScene()) continue;
+            if (c.GetComponentInParent<AeroSurfaceMap>() != null || c.GetComponentInParent<BallPlayerController>() != null) continue;
+            if (c.name == "Seabed") continue;
+            AeroSurfaceType t;
+            if (c.GetComponentInParent<GolfTeeSpawnPoint>() != null) t = AeroSurfaceType.Tee;
+            else if (c.GetComponentInParent<GolfHoleAutoCutter>() != null) t = AeroSurfaceType.Green;
+            else
+            {
+                var r = c.GetComponent<Renderer>();
+                string m = r != null && r.sharedMaterial != null ? r.sharedMaterial.name : "";
+                if (m == "Float_Green") t = AeroSurfaceType.Green;
+                else if (m == "Float_Fairway" || m == "Gloss_Lime" || m.StartsWith("Tutorial_")) t = AeroSurfaceType.Fairway;
+                else if (m == "Float_Rim") t = AeroSurfaceType.Rough;
+                else if (m.StartsWith("Grass")) t = AeroSurfaceType.Fairway;
+                else t = AeroSurfaceType.Hard;
+            }
+            var s = c.GetComponent<AeroSurface>();
+            if (s == null) s = c.gameObject.AddComponent<AeroSurface>();
+            s.type = t;
+            tagged++;
+            counts[t] = counts.TryGetValue(t, out int n) ? n + 1 : 1;
+        }
+        var sb = new System.Text.StringBuilder($"Tagged {tagged} colliders:");
+        foreach (var kv in counts) sb.Append($" {kv.Key}={kv.Value}");
+        return sb.ToString();
+    }
+
+    private static bool LoadSharedTextures()
+    {
+        Texture2D L(string n) => AssetDatabase.LoadAssetAtPath<Texture2D>(Root + "/Textures/" + n + ".png");
+        GrassDetail = L("Grass_Detail"); GrassDetailNormal = L("Grass_DetailNormal"); WaterNormal = L("Water_Ripples_N");
+        Caustics = L("Seabed_Caustics"); CloudA = L("Cloud_A"); CloudB = L("Cloud_B"); SoftDot = L("Soft_Dot"); Streaks = L("Waterfall_Streaks");
+        return GrassDetail && GrassDetailNormal && WaterNormal && Caustics && CloudA && CloudB && SoftDot && Streaks;
+    }
+
+    /// <summary>Mowing stripes down the length of a lane, with a slightly lighter fringe along the walls.</summary>
+    private static Texture2D LaneTexture()
+    {
+        int w = 1024, h = 256;
+        var t = new Texture2D(w, h, TextureFormat.RGBA32, false);
+        var px = new Color[w * h];
+        Color fair = new Color(0.34f, 0.82f, 0.27f), fringe = new Color(0.42f, 0.88f, 0.33f);
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+            {
+                float u = (x + 0.5f) / w, v = (y + 0.5f) / h;
+                float s = Smooth(0.3f, 0.7f, 0.5f + 0.5f * Mathf.Sin(u * Mathf.PI * 2f * 10f));
+                Color c = fair * (0.93f + 0.14f * s);
+                c = Color.Lerp(c, fringe, Smooth(0.09f, 0.0f, Mathf.Min(v, 1f - v)) * 0.7f);
+                c.a = 1f;
+                px[y * w + x] = c;
+            }
+        t.SetPixels(px); t.Apply(false);
+        return SaveTexture(t, "Tutorial_Lane", false, true, false, TextureWrapMode.Repeat);
     }
 
     // ===================================================================== gameplay wiring
@@ -183,6 +402,7 @@ public static class FrutigerAeroNineHoleBuilder
             }
             var ballCtl = rig.GetComponentInChildren<BallPlayerController>(true);
             if (ballCtl != null && ballCtl.GetComponent<AeroBallSafety>() == null) ballCtl.gameObject.AddComponent<AeroBallSafety>();
+            if (ballCtl != null) ballCtl.transform.localScale = Vector3.one * BallScale;
             var cam = rig.GetComponentInChildren<Camera>(true);
             if (cam != null)
             {
@@ -226,6 +446,7 @@ public static class FrutigerAeroNineHoleBuilder
         if (ballCtl != null)
         {
             if (ballCtl.GetComponent<AeroBallSafety>() == null) ballCtl.gameObject.AddComponent<AeroBallSafety>();
+            ballCtl.transform.localScale = Vector3.one * BallScale;
             var spawn = holes[0].tee.Find("Ball Spawn Point");
             var sp = spawn != null ? spawn : holes[0].tee;
             ballCtl.transform.SetPositionAndRotation(sp.position, sp.rotation);
@@ -271,7 +492,7 @@ public static class FrutigerAeroNineHoleBuilder
             drop.transform.SetParent(sky.root, false);
             drop.transform.localPosition = new Vector3(0f, -24f, 70f);
             var b = drop.AddComponent<BoxCollider>(); b.isTrigger = true; b.size = new Vector3(140f, 2f, 240f);
-            var hz = drop.AddComponent<AeroHazard>(); hz.label = "Into the clouds!"; hz.resetDelay = 0.2f;
+            var hz = drop.AddComponent<AeroHazard>(); hz.label = "Into the clouds!"; hz.resetDelay = 0.2f; hz.floats = false;
         }
     }
 
@@ -373,6 +594,8 @@ public static class FrutigerAeroNineHoleBuilder
     }
 
     // ===================================================================== environment
+    private static Light existingSun;
+
     private static void BuildEnvironment(Transform env)
     {
         var ocean = Prim(PrimitiveType.Plane, "Ocean", env, new Vector3(0f, WaterY, 0f), new Vector3(700f, 1f, 700f), mWater, false, false);
@@ -388,10 +611,15 @@ public static class FrutigerAeroNineHoleBuilder
         sky.SetFloat("_SunSize", 0.05f);
         EditorUtility.SetDirty(sky);
 
-        var sunGO = new GameObject("Sun");
-        sunGO.transform.SetParent(env, false);
-        sunGO.transform.rotation = Quaternion.Euler(48f, -35f, 0f);
-        var sun = sunGO.AddComponent<Light>();
+        // reuse an existing directional light if the scene has one (so a restyled scene doesn't get two suns)
+        Light sun = existingSun;
+        if (sun == null)
+        {
+            var sunGO = new GameObject("Sun");
+            sunGO.transform.SetParent(env, false);
+            sun = sunGO.AddComponent<Light>();
+        }
+        sun.transform.rotation = Quaternion.Euler(48f, -35f, 0f);
         sun.type = LightType.Directional;
         sun.color = new Color(1f, 0.97f, 0.9f);
         sun.intensity = 1.35f;
@@ -520,7 +748,7 @@ public static class FrutigerAeroNineHoleBuilder
     }
 
     /// <summary>Glossy Wii-style sign board: hole number, name and par.</summary>
-    private static void HoleSign(Transform root, HoleInfo info, Vector3 groundPos, float yaw)
+    private static void HoleSign(Transform root, HoleInfo info, Vector3 groundPos, float yaw, string bottomLine = null)
     {
         var s = Group($"Hole {info.number} Sign", root);
         s.transform.localPosition = groundPos;
@@ -546,7 +774,7 @@ public static class FrutigerAeroNineHoleBuilder
         }
         Text("Number", info.number.ToString(), new Vector3(-1.25f, 2.42f, -0.26f), 0.11f, Color.white, TextAnchor.MiddleCenter);
         Text("Title", info.title, new Vector3(-0.6f, 2.65f, -0.12f), 0.045f, new Color(0.05f, 0.3f, 0.55f), TextAnchor.MiddleLeft);
-        Text("Par", "PAR " + info.par, new Vector3(-0.6f, 2.12f, -0.12f), 0.05f, new Color(0.1f, 0.6f, 0.35f), TextAnchor.MiddleLeft);
+        Text("Par", bottomLine ?? ("PAR " + info.par), new Vector3(-0.6f, 2.12f, -0.12f), 0.05f, new Color(0.1f, 0.6f, 0.35f), TextAnchor.MiddleLeft);
     }
 
     private static List<Vector2> RoundedRect(float w, float h, float r)
@@ -648,7 +876,7 @@ public static class FrutigerAeroNineHoleBuilder
             float x = Mathf.Lerp(x0, x1, (float)rng.NextDouble()), z = Mathf.Lerp(z0, z1, (float)rng.NextDouble());
             if (d.IslandT(x, z) < treeIsland || d.FairT(x, z) > -0.30f || d.GreenT(x, z) > -0.9f || d.TeeT(x, z) > -0.8f) continue;
             if (d.BunkerT(x, z) > -0.8f || d.PondT(x, z) > -0.5f || d.ProtectT(x, z) > -0.4f || !Clear(x, z, exclude)) continue;
-            float h = d.Height(x, z); if (h < 0.5f) continue;
+            float h = d.Height(x, z); if (h < d.beachLevel - 0.2f) continue;
             if (d.hasCup && Vector2.Distance(new Vector2(x, z), d.cup) < 14f) continue;
             float s = 0.85f + (float)rng.NextDouble() * 0.9f;
             if (Blocked(new Vector3(x, h, z), 1.4f * s, 5.6f * s)) continue;
@@ -661,7 +889,7 @@ public static class FrutigerAeroNineHoleBuilder
             float x = Mathf.Lerp(x0, x1, (float)rng.NextDouble()), z = Mathf.Lerp(z0, z1, (float)rng.NextDouble());
             if (d.IslandT(x, z) < 0.22f || d.FairT(x, z) > -0.12f || d.GreenT(x, z) > -0.4f || d.TeeT(x, z) > -0.3f) continue;
             if (d.BunkerT(x, z) > -0.3f || d.PondT(x, z) > -0.25f || d.ProtectT(x, z) > -0.1f || !Clear(x, z, exclude)) continue;
-            float h = d.Height(x, z); if (h < 0.5f) continue;
+            float h = d.Height(x, z); if (h < d.beachLevel - 0.2f) continue;
             if (Blocked(new Vector3(x, h, z), 0.3f, 0.4f)) continue;
             Prim(PrimitiveType.Sphere, "Flower", fg.transform, new Vector3(x, h + 0.12f, z), Vector3.one * 0.28f, mFlowers[rng.Next(mFlowers.Length)], false, false);
             placed++;

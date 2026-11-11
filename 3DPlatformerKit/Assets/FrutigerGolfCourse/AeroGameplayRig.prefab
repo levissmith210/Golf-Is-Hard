@@ -431,7 +431,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
   m_LocalPosition: {x: 1.3500004, y: 0.828, z: 2.13}
-  m_LocalScale: {x: 0.5, y: 0.5, z: 0.5}
+  m_LocalScale: {x: 0.3, y: 0.3, z: 0.3}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 3218659708940324365}
@@ -562,6 +562,34 @@ MonoBehaviour:
   fastMomentumReplacementTime: 0.16
   groundedRollingDrag: 0.65
   airborneGravityMultiplier: 1.2
+  shotDistanceBoost: 1.25
+  defaultRollDragScale: 0.6
+  useSurfaceFeel: 1
+  fairwayFeel:
+    shotPower: 1
+    rollingDrag: 0.45
+    landingKeep: 0.75
+  roughFeel:
+    shotPower: 0.72
+    rollingDrag: 1.15
+    landingKeep: 0.6
+  sandFeel:
+    shotPower: 0.5
+    rollingDrag: 2.8
+    landingKeep: 0.22
+  greenFeel:
+    shotPower: 0.8
+    rollingDrag: 0.28
+    landingKeep: 0.75
+  teeFeel:
+    shotPower: 1
+    rollingDrag: 0.45
+    landingKeep: 0.75
+  hardFeel:
+    shotPower: 1
+    rollingDrag: 0.2
+    landingKeep: 1
+  showLieBadge: 1
   shotElevationDegrees: 0
   elevationChangeSpeed: 45
   directionArrowColor: {r: 0.18, g: 0.78, b: 0.96, a: 0.52}

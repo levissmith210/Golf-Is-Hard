@@ -1,5 +1,6 @@
 using System;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 /// <summary>
 /// Tracks the required hole order and moves the ball to each next tee after a
@@ -7,6 +8,11 @@ using UnityEngine;
 /// </summary>
 public class GolfCourseManager : MonoBehaviour
 {
+    private const string TutorialCompletedPreference = "GolfIsHard.TutorialCompleted.v1";
+    private const string TutorialSceneName = "NineHoleCourse";
+    private const string MainCourseSceneName = "FrutigerAeroNineHole";
+    private static bool startTutorialOnSceneLoad;
+    private static bool startCourseOnSceneLoad;
     private enum TutorialStep
     {
         None,
@@ -93,6 +99,7 @@ public class GolfCourseManager : MonoBehaviour
     private TutorialStep tutorialStep;
     private bool tutorialAngleShotUnlocked;
     private float tutorialLookStartTime = -1f;
+    private float tutorialCourseTransitionTime = -1f;
 
     public int ActiveHoleNumber => activeHoleIndex + 1;
     public int TotalHoleCount => holesInOrder != null ? holesInOrder.Length : 0;
@@ -120,26 +127,62 @@ public class GolfCourseManager : MonoBehaviour
 
     private void Start()
     {
+        bool autoStartTutorial = startTutorialOnSceneLoad;
+        bool autoStartCourse = startCourseOnSceneLoad;
+        startTutorialOnSceneLoad = false;
+        startCourseOnSceneLoad = false;
+
+        if (autoStartTutorial)
+        {
+            if (!CanRunTutorial())
+            {
+                Debug.LogError("The tutorial scene needs two tutorial stages, a ball, and a camera assigned.", this);
+                showStartMenuOnLaunch = true;
+            }
+            else
+            {
+                StartGameplayFromScene();
+                StartTutorial();
+                return;
+            }
+        }
+
         HoleStage firstStage = GetActiveStage();
         if (ball == null || firstStage == null || firstStage.teePoint == null)
+        {
+            if (autoStartCourse)
+                Debug.LogError("The Frutiger Aero course needs its first hole and tee assigned.", this);
             return;
+        }
 
         Transform spawnPoint = ResolveBallSpawnPoint(firstStage.teePoint);
         ball.ResetForNextHole(spawnPoint.position, spawnPoint.rotation);
 
-        if (showStartMenuOnLaunch)
+        if (showStartMenuOnLaunch && !autoStartCourse)
         {
             PrepareStartMenu();
             return;
         }
 
+        StartGameplayFromScene();
+    }
+
+    private void StartGameplayFromScene()
+    {
         SetGameplayEnabled(true);
         if (musicManager != null)
             musicManager.PlayGameplayMusic();
         if (cameraController != null)
+        {
             cameraController.SnapFollowToTarget();
+            cameraController.LockMouse();
+        }
+        else
+        {
+            Cursor.lockState = CursorLockMode.Locked;
+            Cursor.visible = false;
+        }
     }
-
     private void Update()
     {
         if (showingStartMenu)
@@ -160,6 +203,16 @@ public class GolfCourseManager : MonoBehaviour
             return;
         }
 
+        if (tutorialCourseTransitionTime >= 0f)
+        {
+            if (Time.timeScale > 0f && Time.unscaledTime >= tutorialCourseTransitionTime)
+            {
+                tutorialCourseTransitionTime = -1f;
+                StartActualCourseAfterTutorial();
+            }
+            return;
+        }
+
         if (Time.timeScale > 0f)
             UpdateTutorialProgress();
 
@@ -169,7 +222,6 @@ public class GolfCourseManager : MonoBehaviour
         if (Input.GetKeyDown(KeyCode.Space))
             AdvanceToNextHole();
     }
-
     private void OnGUI()
     {
         if (showingStartMenu)
@@ -231,11 +283,22 @@ public class GolfCourseManager : MonoBehaviour
             return;
 
         FrutigerAeroUI.ResetGlassButtonHover();
-        showingStartMenu = false;
         PlayUiSound(startGameSound);
         if (menuCamera != null)
             menuCamera.StopOrbit();
 
+        Scene activeScene = SceneManager.GetActiveScene();
+        bool isFirstPlayFromMainCourse = activeScene.name == MainCourseSceneName &&
+            playTutorialOnStart && PlayerPrefs.GetInt(TutorialCompletedPreference, 0) == 0;
+        if (isFirstPlayFromMainCourse)
+        {
+            showingStartMenu = false;
+            startTutorialOnSceneLoad = true;
+            SceneManager.LoadScene(TutorialSceneName);
+            return;
+        }
+
+        showingStartMenu = false;
         HoleStage firstStage = GetActiveStage();
         if (ball != null && firstStage != null && firstStage.teePoint != null)
         {
@@ -262,7 +325,6 @@ public class GolfCourseManager : MonoBehaviour
         else
             CompleteTutorial();
     }
-
     private bool CanRunTutorial()
     {
         return playTutorialOnStart && tutorialHoles != null &&
@@ -548,6 +610,7 @@ public class GolfCourseManager : MonoBehaviour
         tutorialMode = false;
         isTransitioning = false;
         awaitingNextHole = false;
+        tutorialCourseTransitionTime = -1f;
         courseComplete = false;
         tutorialStep = TutorialStep.None;
         tutorialAngleShotUnlocked = false;
@@ -638,39 +701,45 @@ public class GolfCourseManager : MonoBehaviour
             return;
         }
 
-        if (enteredHole == activeStage.hole)
+        if (enteredHole != activeStage.hole)
         {
-            enteredHole.ShowHoleComplete(ball.StrokeCount);
-            ball.StopForHole();
+            enteredHole.ShowWrongWay(ball, activeStage.hole.transform);
+            return;
+        }
 
-            if (tutorialMode)
-            {
-                if (tutorialStep == TutorialStep.ShootFirstHole && activeTutorialHoleIndex == 0)
-                    tutorialStep = TutorialStep.WaitingForNextHole;
-                else if (tutorialStep == TutorialStep.AngleSecondHole &&
-                         activeTutorialHoleIndex == 1 && tutorialAngleShotUnlocked)
-                    CompleteTutorial();
+        enteredHole.ShowHoleComplete(ball.StrokeCount);
+        ball.StopForHole();
 
-                isTransitioning = true;
-                awaitingNextHole = true;
-            }
-            else if (activeHoleIndex + 1 < TotalHoleCount)
+        if (tutorialMode)
+        {
+            bool finishedTutorial = false;
+            if (tutorialStep == TutorialStep.ShootFirstHole && activeTutorialHoleIndex == 0)
             {
-                isTransitioning = true;
-                awaitingNextHole = true;
+                tutorialStep = TutorialStep.WaitingForNextHole;
             }
-            else
+            else if (tutorialStep == TutorialStep.AngleSecondHole &&
+                     activeTutorialHoleIndex == 1 && tutorialAngleShotUnlocked)
             {
-                courseComplete = true;
-                PlayUiSound(courseCompleteSound);
+                CompleteTutorial();
+                finishedTutorial = true;
             }
+
+            isTransitioning = true;
+            awaitingNextHole = !finishedTutorial;
+            if (finishedTutorial)
+                tutorialCourseTransitionTime = Time.unscaledTime + 1.5f;
+        }
+        else if (activeHoleIndex + 1 < TotalHoleCount)
+        {
+            isTransitioning = true;
+            awaitingNextHole = true;
         }
         else
         {
-            enteredHole.ShowWrongWay(ball, activeStage.hole.transform);
+            courseComplete = true;
+            PlayUiSound(courseCompleteSound);
         }
     }
-
     public void HandleHoleExited(HoleTrigger exitedHole, BallPlayerController exitingBall)
     {
         if (exitedHole != null && exitingBall != null)
@@ -754,38 +823,19 @@ public class GolfCourseManager : MonoBehaviour
 
     private void StartActualCourseAfterTutorial()
     {
-        HoleStage firstCourseStage = holesInOrder != null && holesInOrder.Length > 0
-            ? holesInOrder[0]
-            : null;
-        if (!IsValidStage(firstCourseStage))
-        {
-            Debug.LogError("Add at least one valid course hole to Holes In Order before starting the course.", this);
-            isTransitioning = false;
-            awaitingNextHole = false;
-            courseComplete = true;
-            return;
-        }
-
-        PlayUiSound(nextHoleSound);
-        HoleStage completedTutorialStage = GetActiveStage();
-        if (completedTutorialStage != null && completedTutorialStage.hole != null)
-            completedTutorialStage.hole.ResetForNextHole();
-
+        tutorialCourseTransitionTime = -1f;
         tutorialMode = false;
         activeTutorialHoleIndex = 0;
-        activeHoleIndex = 0;
-        courseComplete = false;
-        firstCourseStage.hole.ResetForNextHole();
-        Transform spawnPoint = ResolveBallSpawnPoint(firstCourseStage.teePoint);
-        ball.ResetForNextHole(spawnPoint.position, spawnPoint.rotation);
-
-        if (cameraController != null)
-            cameraController.SnapFollowToTarget();
-
-        isTransitioning = false;
+        isTransitioning = true;
         awaitingNextHole = false;
-    }
+        courseComplete = false;
 
+        PlayerPrefs.SetInt(TutorialCompletedPreference, 1);
+        PlayerPrefs.Save();
+        startCourseOnSceneLoad = true;
+        Time.timeScale = 1f;
+        SceneManager.LoadScene(MainCourseSceneName);
+    }
     private void EnsurePromptStyles()
     {
         if (nextHolePromptStyle != null)
@@ -968,6 +1018,9 @@ public class GolfCourseManager : MonoBehaviour
         return tee != null && tee.BallSpawnPoint != null ? tee.BallSpawnPoint : teePoint;
     }
 }
+
+
+
 
 
 
