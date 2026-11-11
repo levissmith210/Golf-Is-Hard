@@ -10,7 +10,8 @@ using UnityEngine;
 [InitializeOnLoad]
 public static class GolfCoursePlayModeStart
 {
-    private const string CourseScenePath = "Assets/Scenes/NineHoleCourse.unity";
+    // Was "Assets/Scenes/NineHoleCourse.unity"; switch back here to play the original course.
+    private const string CourseScenePath = "Assets/FrutigerGolfCourse/FrutigerAeroNineHole.unity";
 
     static GolfCoursePlayModeStart()
     {

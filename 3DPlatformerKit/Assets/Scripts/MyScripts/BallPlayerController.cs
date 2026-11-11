@@ -560,6 +560,18 @@ public class BallPlayerController : MonoBehaviour
 
         enabled = true;
     }
+
+    /// <summary>
+    /// Puts the ball back on a safe spot during a hole (for example after a water hazard),
+    /// keeping the strokes already taken and adding any penalty strokes.
+    /// </summary>
+    public void ReturnToSafeSpot(Vector3 position, int penaltyStrokes)
+    {
+        int strokesSoFar = StrokeCount;
+        ResetForNextHole(position, transform.rotation);
+        StrokeCount = strokesSoFar + Mathf.Max(0, penaltyStrokes);
+    }
+
     private void OnCollisionEnter(Collision collision)
     {
         UpdateGroundContact(collision);
