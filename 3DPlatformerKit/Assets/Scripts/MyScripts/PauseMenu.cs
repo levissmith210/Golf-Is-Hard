@@ -171,6 +171,7 @@ public class PauseMenu : MonoBehaviour
         if (isPaused)
             return;
 
+        GolfShotFeedback.CancelActiveCinematics();
         FrutigerAeroUI.ResetGlassButtonHover();
         isPaused = true;
         previousTimeScale = Time.timeScale;

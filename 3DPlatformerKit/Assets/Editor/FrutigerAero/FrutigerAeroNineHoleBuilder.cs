@@ -1021,14 +1021,89 @@ public static class FrutigerAeroNineHoleBuilder
     }
 
     /// <summary>A curved kicker ramp (quarter-pipe lip) that launches the ball.</summary>
-    private static void Kicker(Transform parent, string name, Vector3 start, Vector3 dir, float length, float rise, float width, Material mat)
+    // ===================================================================== fun pieces (launchers, boosts, gates, sliders)
+    private static Transform LandingTarget(Transform root, string name, Vector3 target)
     {
+        var t = new GameObject(name + " Target").transform;
+        t.SetParent(root, false); t.localPosition = target;
+        var ring = MeshObject("Landing Ring", t, TorusMesh("LandingRing", 2.2f, 0.1f), mYellow, false, null, false);
+        ring.transform.localPosition = Vector3.down * 0.25f; ring.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
+        return t;
+    }
+
+    /// <summary>Cannon pad: roll onto it and it lobs the ball onto the landing ring at the target.</summary>
+    private static void LaunchPad(Transform root, string name, Vector3 pos, Vector3 target, float angle = 42f)
+    {
+        var g = Group(name, root); g.transform.localPosition = pos;
+        Prim(PrimitiveType.Cylinder, "Pad", g.transform, new Vector3(0f, 0.02f, 0f), new Vector3(3f, 0.02f, 3f), mPink, false, false);
+        var ring = MeshObject("Pad Ring", g.transform, TorusMesh("LaunchPadRing", 1.55f, 0.12f), mYellow, false);
+        ring.transform.localPosition = new Vector3(0f, 0.06f, 0f); ring.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
+        var flat = target - pos; flat.y = 0f;
+        Prim(PrimitiveType.Cube, "Pad Arrow", g.transform, new Vector3(0f, 0.05f, 0f), new Vector3(0.5f, 0.03f, 1.8f), mLantern, false, false, Quaternion.LookRotation(flat));
+        var trig = new GameObject("Launch Trigger"); trig.transform.SetParent(g.transform, false); trig.transform.localPosition = new Vector3(0f, 0.6f, 0f);
+        var bc = trig.AddComponent<BoxCollider>(); bc.isTrigger = true; bc.size = new Vector3(2.6f, 1.2f, 2.6f);
+        var lp = trig.AddComponent<AeroLaunchPad>(); lp.launchAngle = angle; lp.target = LandingTarget(root, name, target);
+        KeepOutPath(new List<Vector3> { pos }, 2.4f, 0.5f, 2f);
+    }
+
+    /// <summary>Glowing speed strip that kicks the ball along its arrows.</summary>
+    private static void BoostStrip(Transform root, string name, Vector3 pos, float yaw, float speed = 16f)
+    {
+        var g = Group(name, root); g.transform.localPosition = pos; g.transform.localRotation = Quaternion.Euler(0f, yaw, 0f);
+        Prim(PrimitiveType.Cube, "Strip", g.transform, new Vector3(0f, 0.015f, 0f), new Vector3(2.4f, 0.02f, 3.6f), mSky, false, false);
+        for (int i = 0; i < 3; i++)
+        {
+            float z = -1.1f + i * 1.1f;
+            Prim(PrimitiveType.Cube, "Chevron", g.transform, new Vector3(-0.42f, 0.03f, z), new Vector3(0.18f, 0.02f, 1.0f), mLantern, false, false, Quaternion.Euler(0f, 35f, 0f));
+            Prim(PrimitiveType.Cube, "Chevron", g.transform, new Vector3(0.42f, 0.03f, z), new Vector3(0.18f, 0.02f, 1.0f), mLantern, false, false, Quaternion.Euler(0f, -35f, 0f));
+        }
+        var trig = new GameObject("Boost Trigger"); trig.transform.SetParent(g.transform, false); trig.transform.localPosition = new Vector3(0f, 0.5f, 0f);
+        var bc = trig.AddComponent<BoxCollider>(); bc.isTrigger = true; bc.size = new Vector3(2.4f, 1f, 3.6f);
+        trig.AddComponent<AeroBoostPad>().boostSpeed = speed;
+        KeepOutPath(new List<Vector3> { pos }, 2.4f, 0.5f, 1.5f);
+    }
+
+    /// <summary>Spinning cross-shaped windmill gate: time your shot through the gaps.</summary>
+    private static void SpinnerGate(Transform root, string name, Vector3 pos, float length, float speed, Material mat)
+    {
+        Prim(PrimitiveType.Cylinder, name + " Hub", root, pos + Vector3.up * 0.8f, new Vector3(0.8f, 0.8f, 0.8f), mPearl, true);
+        var spin = Group(name, root); spin.transform.localPosition = pos + Vector3.up * 0.5f;
+        var rb = spin.AddComponent<Rigidbody>(); rb.isKinematic = true; rb.interpolation = RigidbodyInterpolation.Interpolate;
+        spin.AddComponent<AeroSpinner>().degreesPerSecond = speed;
+        Prim(PrimitiveType.Cube, "Blade", spin.transform, Vector3.zero, new Vector3(length, 0.55f, 0.45f), mat, true, true, null, pWall);
+        Prim(PrimitiveType.Cube, "Blade", spin.transform, Vector3.zero, new Vector3(0.45f, 0.55f, length), mat, true, true, null, pWall);
+        foreach (var e in new[] { Vector3.right, Vector3.left, Vector3.forward, Vector3.back })
+            Prim(PrimitiveType.Sphere, "Tip", spin.transform, e * length * 0.5f, Vector3.one * 0.7f, mYellow, false);
+        KeepOutPath(new List<Vector3> { pos }, length * 0.5f + 0.8f, 0.5f, 2f);
+    }
+
+    /// <summary>Block that slides back and forth across a lane.</summary>
+    private static void Slider(Transform root, string name, Vector3 start, Vector3 offset, float period, Vector3 size, Material mat)
+    {
+        var s = Prim(PrimitiveType.Cube, name, root, start, size, mat, true, true, null, pWall);
+        var m = s.AddComponent<AeroMover>(); m.localOffset = offset; m.period = period;
+        KeepOutPath(new List<Vector3> { start, start + offset }, Mathf.Max(size.x, size.z) * 0.7f + 0.4f, 0.5f, size.y + 1f);
+    }
+
+    private static void Kicker(Transform parent, string name, Vector3 start, Vector3 dir, float length, float rise, float width, Material mat, Vector3? launchTarget = null)
+    {
+        if (launchTarget.HasValue)
+        {
+            // trigger over the lip: flings the ball on an arc that lands on the shortcut target
+            var d0 = dir; d0.y = 0f; d0.Normalize();
+            var trig = new GameObject(name + " Launcher");
+            trig.transform.SetParent(parent, false);
+            trig.transform.localPosition = start + d0 * (length * 0.5f) + Vector3.up * (rise * 0.5f + 0.4f); // covers the whole ramp: springboard
+            trig.transform.localRotation = Quaternion.LookRotation(d0);
+            var bc = trig.AddComponent<BoxCollider>(); bc.isTrigger = true; bc.size = new Vector3(width, rise + 1.6f, length);
+            var lp = trig.AddComponent<AeroLaunchPad>(); lp.launchAngle = 38f; lp.minEntrySpeed = 1.2f; lp.target = LandingTarget(parent, name, launchTarget.Value);
+        }
         dir.y = 0f; dir.Normalize();
         var path = new List<Vector3>();
         for (int i = 0; i <= 14; i++)
         {
             float t = i / 14f;
-            path.Add(start + dir * length * t + Vector3.up * (rise * t * t));
+            path.Add(start + dir * length * t + Vector3.up * ((rise + 0.12f) * t * t - 0.12f)); // starts just under the grass so there is no lip
         }
         var g = Group(name, parent);
         KeepOutPath(path, width * 0.5f + 0.6f, rise + 1f, 1f);
@@ -1188,6 +1263,10 @@ public static class FrutigerAeroNineHoleBuilder
             float a = i * 1.3f;
             Prim(PrimitiveType.Cylinder, "Lily Pad", root, new Vector3(-17f + Mathf.Cos(a) * 4.5f, d.pondWater[0].y + 0.03f, 42f + Mathf.Sin(a) * 3.2f), new Vector3(1.4f, 0.02f, 1.4f), mLime, false, false);
         }
+        // twists: speed strip off the tee, windmill gate between the hoops, cannon pad to the green
+        BoostStrip(root, "Speed Strip", V(d, 3.2f, 12f), 18f, 15f);
+        SpinnerGate(root, "Windmill Gate", V(d, 8.95f, 37f), 7f, 70f, mPink);
+        LaunchPad(root, "Green Cannon", V(d, 7.5f, 55f), V(d, -4f, 84f, 0.3f));
         Dress(d, root, 60, 90, new List<Vector3> { new Vector3(-17f, 9f, 42f) });
         Bubbles(root, new Vector3(0f, 3f, 45f), new Vector3(30f, 13f, 50f), 18);
     }
@@ -1239,6 +1318,18 @@ public static class FrutigerAeroNineHoleBuilder
             Prim(PrimitiveType.Sphere, "Pad Flower", pad.transform, new Vector3(r * 0.6f, 0.65f, r * 0.3f), new Vector3(0.9f, 0.5f, 0.9f), mPink, false);
             KeepOutPath(new List<Vector3> { pads[i] }, r + 0.5f, 2f, 1.5f);
         }
+        // twists: speed strip onto the bridge, and two pearl blocks sliding across the deck
+        {
+            var t0 = path[7] - path[5]; t0.y = 0f;
+            BoostStrip(root, "Bridge Boost", path[6] + Vector3.up * 0.01f, Yaw(t0), 14f);
+            foreach (float frac in new[] { 0.38f, 0.66f })
+            {
+                int k = Mathf.RoundToInt(path.Count * frac);
+                var tan = path[k + 1] - path[k - 1]; tan.y = 0f; tan.Normalize();
+                var side = new Vector3(tan.z, 0f, -tan.x);
+                Slider(root, "Bridge Slider", path[k] + Vector3.up * 0.45f - side * 1.7f, side * 3.4f, 2.6f, new Vector3(1.1f, 0.9f, 1.1f), mPearl);
+            }
+        }
         Dress(d, root, 34, 70);
         Bubbles(root, new Vector3(10f, 2f, 70f), new Vector3(25f, 12f, 40f), 22);
     }
@@ -1269,7 +1360,9 @@ public static class FrutigerAeroNineHoleBuilder
         Waterfall(root, d, 6f, 113.2f, 110.8f, d.pondWater[3].y, d.pondWater[2].y);
 
         // SHORTCUT: kicker on the middle terrace launches over the upper cliff toward the green
-        Kicker(root, "Cliff Kicker", V(d, -4f, 91.5f, -0.02f), Vector3.forward, 7f, 1.8f, 4f, mPearl);
+        Kicker(root, "Cliff Kicker", V(d, -4f, 91.5f, -0.02f), Vector3.forward, 7f, 1.8f, 4f, mPearl, V(d, -2f, 130f, 0.3f));
+        BoostStrip(root, "Kicker Boost", V(d, -4f, 86f), 0f, 13f);
+        SpinnerGate(root, "Terrace Windmill", V(d, 4f, 38f), 8f, -60f, mSky);
         // ramp markers so players can spot the side ramps
         Prim(PrimitiveType.Sphere, "Ramp Marker", root, V(d, 14f, 47f, 0.5f), Vector3.one * 1f, mYellow, false);
         Prim(PrimitiveType.Sphere, "Ramp Marker", root, V(d, -14f, 99f, 0.5f), Vector3.one * 1f, mYellow, false);
@@ -1409,6 +1502,8 @@ public static class FrutigerAeroNineHoleBuilder
             var b = Prim(PrimitiveType.Sphere, "Halo Bubble", halo.transform, new Vector3(Mathf.Cos(a) * 11.5f, top + 4f, 68f + Mathf.Sin(a) * 11.5f), Vector3.one * 1.4f, mBubble, false, false);
             b.AddComponent<AeroBob>().amplitude = 0.7f;
         }
+        // SHORTCUT 2: summit cannon beside the apron lobs the ball straight onto the summit green
+        LaunchPad(root, "Summit Cannon", V(d, -6f, 49f), new Vector3(0f, top + 0.3f, 67f), 72f);
         Dress(d, root, 30, 60, new List<Vector3> { new Vector3(0f, 22f, 68f) });
         Bubbles(root, new Vector3(0f, 3f, 34f), new Vector3(18f, 10f, 25f), 10);
     }
@@ -1449,6 +1544,7 @@ public static class FrutigerAeroNineHoleBuilder
                 b.transform.localPosition = V(d, x, z);
                 var body = Prim(PrimitiveType.Cylinder, "Body", b.transform, new Vector3(0f, 0.55f, 0f), new Vector3(1.8f, 0.55f, 1.8f), bc[k % bc.Length], false);
                 var mc = body.AddComponent<MeshCollider>(); mc.sharedMesh = body.GetComponent<MeshFilter>().sharedMesh; mc.convex = true; mc.sharedMaterial = pBouncy;
+                body.AddComponent<AeroBumper>().pulseTarget = b.transform; // fires the ball away on contact
                 Prim(PrimitiveType.Sphere, "Dome", b.transform, new Vector3(0f, 1.1f, 0f), new Vector3(1.8f, 0.9f, 1.8f), bc[k % bc.Length], false);
                 var ring = MeshObject("Ring", b.transform, TorusMesh("H5_BumperRing", 0.95f, 0.12f), mPearl, false);
                 ring.transform.localPosition = new Vector3(0f, 0.25f, 0f);
@@ -1558,6 +1654,8 @@ public static class FrutigerAeroNineHoleBuilder
             var bob = cr.AddComponent<AeroBob>(); bob.amplitude = 0.8f; bob.spinDegreesPerSecond = 25f;
             crystals++;
         }
+        // SHORTCUT 2: sky cannon on Isle A fires the ball all the way to the green isle
+        LaunchPad(root, "Sky Cannon", A + new Vector3(3f, 0f, 3f), G + new Vector3(0f, 0.3f, -8f), 40f);
         Bubbles(root, new Vector3(0f, -4f, 70f), new Vector3(30f, 20f, 70f), 24);
     }
 
@@ -1580,7 +1678,7 @@ public static class FrutigerAeroNineHoleBuilder
         var d = new IslandDef { name = "H7_HalfpipeCanyon" };
         d.paths.Add(new LandPath { extra = 8f }.Add(0f, -6f, 9f).Add(0f, 18f, 9f));
         d.land.Add(new Blob(0f, 2f, 16f, 14f)); d.land.Add(new Blob(-10f, 86f, 12f, 10f)); d.land.Add(new Blob(-10f, 160f, 26f, 22f));
-        d.fair.Add(new Blob(-10f, 86f, 6f, 5f)); d.fair.Add(new Blob(-7f, 141f, 9f, 6f));
+        d.fair.Add(new Blob(-10f, 86f, 6f, 5f)); d.fair.Add(new Blob(-7f, 141f, 9f, 6f)); d.fair.Add(new Blob(-9f, 15f, 3.2f, 7f)); // runway to the Leap Ramp
         d.hasTee = true; d.tee = Vector2.zero;
         d.hasGreen = true; d.green = new Blob(-10f, 162f, 12f, 10f); d.hasCup = true; d.cup = new Vector2(-9f, 163f);
         d.bunkers.Add(new Blob(-16f, 90f, 3f, 2.2f)); d.bunkers.Add(new Blob(3f, 158f, 4f, 3f)); d.bunkers.Add(new Blob(-23f, 167f, 4f, 3f));
@@ -1626,7 +1724,8 @@ public static class FrutigerAeroNineHoleBuilder
 
         // SHORTCUT: launch ramp off the tee island to the mid-sea islet, then chip to the green
         var dir = new Vector3(-1f, 0f, 66f).normalized;
-        Kicker(root, "Leap Ramp", V(d, -9f, 19.5f, -0.02f), dir, 7f, 1.7f, 4f, mPearl);
+        Kicker(root, "Leap Ramp", V(d, -9f, 19.5f, -0.02f), dir, 7f, 1.7f, 4f, mPearl, V(d, -10f, 86f, 0.3f));
+        BoostStrip(root, "Pipe Boost", V(d, 0.4f, 9.5f), 9f, 15f);
         Tree(root, V(d, -14f, 84f), 1.2f); Tree(root, V(d, -5f, 91f), 0.9f);
 
         Dress(d, root, 34, 70, new List<Vector3> { new Vector3(-9f, 6f, 24f), new Vector3(0f, 8f, 13f), new Vector3(-11f, 8f, 141f) });
@@ -1732,6 +1831,10 @@ public static class FrutigerAeroNineHoleBuilder
             Prim(PrimitiveType.Sphere, "Isthmus Lantern", root, V(d, x - 3.4f, z, 0.6f), Vector3.one * 0.5f, mLantern, false, false);
             Prim(PrimitiveType.Sphere, "Isthmus Lantern", root, V(d, x + 3.4f, z, 0.6f), Vector3.one * 0.5f, mLantern, false, false);
         }
+        // twists: lagoon cannon from the west fairway to the dome's front, and a slider guarding the isthmus
+        LaunchPad(root, "Lagoon Cannon", V(d, -22f, 92f), V(d, 4f, 164f, 0.3f));
+        Slider(root, "Isthmus Slider", V(d, 3.8f, 115f, 0.45f), new Vector3(4.4f, 0f, 0f), 2.2f, new Vector3(1.2f, 0.9f, 1.2f), mPink);
+        SpinnerGate(root, "Fairway Windmill", V(d, -24f, 125f), 8f, 55f, mYellow);
         Dress(d, root, 70, 110, new List<Vector3> { new Vector3(8f, 22f, 186f) });
         Bubbles(root, new Vector3(5f, 3f, 100f), new Vector3(30f, 14f, 60f), 24);
     }
@@ -1811,6 +1914,10 @@ public static class FrutigerAeroNineHoleBuilder
             var b = Prim(PrimitiveType.Sphere, "Stage Bubble", bub.transform, new Vector3(24f + Mathf.Cos(a) * 17f, gy + 5f + (i % 3), 170f + Mathf.Sin(a) * 15f), Vector3.one * 2.6f, mBubble, false, false);
             b.AddComponent<AeroBob>().amplitude = 0.9f;
         }
+        // twists: speed strip that helps you charge up the rainbow, and two windmills on the long way round
+        BoostStrip(root, "Rainbow Boost", V(d, -3.4f, 17f), 8f, 19f);
+        SpinnerGate(root, "Bay Windmill", V(d, -42f, 100f), 8f, 60f, mSky);
+        SpinnerGate(root, "Stage Windmill", V(d, -11f, 161f), 8f, -65f, mPink);
         Dress(d, root, 80, 130, new List<Vector3> { new Vector3(8f, 10f, 98f), new Vector3(-3f, 6f, 24f), new Vector3(16f, 6f, 156f), new Vector3(24f, 20f, 172f) });
         Bubbles(root, new Vector3(0f, 3f, 100f), new Vector3(40f, 16f, 70f), 26);
     }

@@ -32,6 +32,19 @@ public class ThirdPersonCameraController : MonoBehaviour
     [SerializeField, Min(0.01f)] private float collisionRadius = 0.2f;
     [SerializeField, Min(0f)] private float collisionPadding = 0.1f;
 
+    [Header("Shot Camera")]
+    [SerializeField] private bool chaseShots = true;
+    [SerializeField, Range(0f, 1f)] private float impactShake = 0.65f;
+    [SerializeField, Range(0f, 12f)] private float flightFieldOfView = 6f;
+    private Camera viewCamera;
+    private BallPlayerController ball;
+    private float baseFieldOfView;
+    private float flightBlend;
+    private float impactAt = -100f;
+    private float impactStrength;
+    private float lastLookAt = -100f;
+    private Vector3 launchDirection;
+
     private float yaw;
     private float pitch;
     private float distance;
@@ -53,6 +66,22 @@ public class ThirdPersonCameraController : MonoBehaviour
     public bool TutorialZoomInUsed { get; private set; }
     public bool TutorialZoomOutUsed { get; private set; }
     public bool TutorialZoomResetUsed { get; private set; }
+
+    public void NotifyShot(float power, Vector3 velocity)
+    {
+        impactAt = Time.unscaledTime;
+        impactStrength = power >= 0.65f ? Mathf.InverseLerp(0.5f, 1f, power) : 0f;
+        launchDirection = Vector3.ProjectOnPlane(velocity, Vector3.up).normalized;
+    }
+
+    public void ResetShotPresentation()
+    {
+        flightBlend = 0f;
+        impactAt = -100f;
+        impactStrength = 0f;
+        if (viewCamera != null)
+            viewCamera.fieldOfView = baseFieldOfView;
+    }
 
     public void SetTutorialInputAccess(bool allowLook, bool allowZoom, bool allowZoomReset, bool resetProgress)
     {
@@ -88,10 +117,16 @@ public class ThirdPersonCameraController : MonoBehaviour
         followedTargetPosition = target.position;
         followVelocity = Vector3.zero;
         hasFollowPosition = true;
+        ResetShotPresentation();
     }
 
     private void Awake()
     {
+        viewCamera = GetComponent<Camera>();
+        if (viewCamera != null)
+            baseFieldOfView = viewCamera.fieldOfView;
+        if (target != null)
+            ball = target.GetComponentInParent<BallPlayerController>();
         distance = Mathf.Clamp(startingDistance, minimumDistance, maximumDistance);
         yaw = transform.eulerAngles.y;
         pitch = NormalizeAngle(transform.eulerAngles.x);
@@ -147,7 +182,10 @@ public class ThirdPersonCameraController : MonoBehaviour
             float mouseX = Input.GetAxis("Mouse X");
             float mouseY = Input.GetAxis("Mouse Y");
             if (Mathf.Abs(mouseX) > 0.01f || Mathf.Abs(mouseY) > 0.01f)
+            {
                 TutorialLookInputDetected = true;
+                lastLookAt = Time.unscaledTime;
+            }
 
             yaw += mouseX * sensitivity * horizontalDirection;
             pitch -= mouseY * sensitivity * verticalDirection;
@@ -180,6 +218,13 @@ public class ThirdPersonCameraController : MonoBehaviour
         if (target == null || Time.timeScale <= 0f)
             return;
 
+        GolfShotFeedback feedback = ball != null ? ball.ShotFeedback : null;
+        bool inFlight = chaseShots && ball != null && ball.enabled && feedback != null
+            && feedback.HasActiveShot && !ball.IsGrounded && ball.Velocity.magnitude > 3f;
+        float response = 1f - Mathf.Exp(-Time.unscaledDeltaTime * 5f);
+        flightBlend = Mathf.Lerp(flightBlend, inFlight ? 1f : 0f, response);
+        float cupBlend = feedback != null ? feedback.CupFocusWeight : 0f;
+
         if (!hasFollowPosition)
         {
             followedTargetPosition = target.position;
@@ -197,6 +242,8 @@ public class ThirdPersonCameraController : MonoBehaviour
             float springAmount = Mathf.Clamp01(followSpringiness / 1.5f);
             float springFrequency = Mathf.Lerp(18f, 7.5f, springAmount);
             float dampingRatio = Mathf.Lerp(0.92f, 0.38f, springAmount);
+            springFrequency = Mathf.Lerp(springFrequency, 18f, flightBlend);
+            dampingRatio = Mathf.Lerp(dampingRatio, 0.9f, flightBlend);
             float deltaTime = Time.deltaTime;
             int substepCount = Mathf.Max(1, Mathf.CeilToInt(deltaTime / (1f / 60f)));
             float substep = deltaTime / substepCount;
@@ -213,16 +260,45 @@ public class ThirdPersonCameraController : MonoBehaviour
         }
 
         Vector3 focusPoint = followedTargetPosition + focusOffset;
-        Quaternion orbitRotation = Quaternion.Euler(pitch, yaw, 0f);
+        Vector3 velocity = ball != null ? ball.Velocity : Vector3.zero;
+        focusPoint += Vector3.ClampMagnitude(velocity * 0.07f, 1.8f) * flightBlend;
+        if (cupBlend > 0f)
+            focusPoint = Vector3.Lerp(focusPoint, (target.position + feedback.CupFocus) * 0.5f + focusOffset, cupBlend * 0.65f);
+        Vector3 travel = Vector3.ProjectOnPlane(velocity, Vector3.up);
+        if (travel.sqrMagnitude < 4f)
+            travel = launchDirection;
+        float chaseYaw = travel.sqrMagnitude > 0.01f ? Mathf.Atan2(travel.x, travel.z) * Mathf.Rad2Deg : yaw;
+        float chaseWeight = Time.unscaledTime - lastLookAt > 0.8f ? flightBlend * 0.72f : 0f;
+        float renderedYaw = Mathf.LerpAngle(yaw, chaseYaw, chaseWeight);
+        float renderedPitch = Mathf.Lerp(pitch, Mathf.Clamp(pitch, 12f, 27f), flightBlend * 0.65f);
+        renderedPitch = Mathf.Lerp(renderedPitch, 29f, cupBlend * 0.55f);
+        Quaternion orbitRotation = Quaternion.Euler(renderedPitch, renderedYaw, 0f);
         Vector3 cameraDirection = orbitRotation * Vector3.back;
-        Vector3 desiredPosition = focusPoint + cameraDirection * distance;
+        float shotDistance = Mathf.Lerp(distance, distance * 1.18f, flightBlend);
+        shotDistance = Mathf.Lerp(shotDistance, Mathf.Clamp(distance * 0.72f, 3f, 8f), cupBlend * 0.7f);
+        Vector3 desiredPosition = focusPoint + cameraDirection * shotDistance;
 
         if (avoidObstacles)
-            desiredPosition = GetPositionBeforeObstacle(focusPoint, cameraDirection, desiredPosition);
+            desiredPosition = GetPositionBeforeObstacle(focusPoint, cameraDirection, desiredPosition, shotDistance);
 
         // Apply the orbit directly so mouse movement has no smoothing or lag.
         transform.position = desiredPosition;
         transform.rotation = orbitRotation;
+
+        float impactAge = Time.unscaledTime - impactAt;
+        float kick = impactAge >= 0f && impactAge < 0.3f ? Mathf.Exp(-impactAge * 17f) * impactStrength : 0f;
+        if (kick > 0.001f && impactShake > 0f)
+        {
+            float noiseTime = impactAge * 55f;
+            Vector2 noise = new Vector2(Mathf.PerlinNoise(noiseTime, 0.13f), Mathf.PerlinNoise(0.67f, noiseTime)) * 2f - Vector2.one;
+            transform.position += orbitRotation * new Vector3(noise.x, noise.y, 0f) * (0.1f * kick * impactShake);
+            transform.rotation *= Quaternion.Euler(-0.7f * kick * impactShake, 0f, noise.x * 0.6f * kick * impactShake);
+        }
+        if (viewCamera != null)
+        {
+            float desiredFov = baseFieldOfView + flightFieldOfView * flightBlend + 3f * kick - 3f * cupBlend;
+            viewCamera.fieldOfView = Mathf.Lerp(viewCamera.fieldOfView, desiredFov, 1f - Mathf.Exp(-Time.unscaledDeltaTime * 10f));
+        }
     }
 
     private void OnApplicationFocus(bool hasFocus)
@@ -246,17 +322,18 @@ public class ThirdPersonCameraController : MonoBehaviour
     private Vector3 GetPositionBeforeObstacle(
         Vector3 focusPoint,
         Vector3 cameraDirection,
-        Vector3 desiredPosition)
+        Vector3 desiredPosition,
+        float castDistance)
     {
         RaycastHit[] hits = Physics.SphereCastAll(
             focusPoint,
             collisionRadius,
             cameraDirection,
-            distance,
+            castDistance,
             collisionLayers,
             QueryTriggerInteraction.Ignore);
 
-        float nearestDistance = distance;
+        float nearestDistance = castDistance;
         for (int i = 0; i < hits.Length; i++)
         {
             Transform hitTransform = hits[i].transform;
@@ -267,7 +344,7 @@ public class ThirdPersonCameraController : MonoBehaviour
                 nearestDistance = hits[i].distance;
         }
 
-        if (nearestDistance < distance)
+        if (nearestDistance < castDistance)
         {
             float safeDistance = Mathf.Max(0.05f, nearestDistance - collisionPadding);
             return focusPoint + cameraDirection * safeDistance;

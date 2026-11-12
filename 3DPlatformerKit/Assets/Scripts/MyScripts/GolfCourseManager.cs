@@ -104,6 +104,7 @@ public class GolfCourseManager : MonoBehaviour
     public int ActiveHoleNumber => activeHoleIndex + 1;
     public int TotalHoleCount => holesInOrder != null ? holesInOrder.Length : 0;
     public bool IsCourseComplete => courseComplete;
+    public HoleTrigger ActiveHole => GetActiveStage()?.hole;
 
     private void Awake()
     {
@@ -709,6 +710,8 @@ public class GolfCourseManager : MonoBehaviour
 
         enteredHole.ShowHoleComplete(ball.StrokeCount);
         ball.StopForHole();
+        if (ball.ShotFeedback != null)
+            ball.ShotFeedback.CupCaptured(enteredHole.transform.position);
 
         if (tutorialMode)
         {
@@ -891,7 +894,7 @@ public class GolfCourseManager : MonoBehaviour
             }
             case TutorialStep.ShootFirstHole:
                 heading = "TAKE YOUR SHOT";
-                instruction = "Charge with left click, release to shoot Hole 1; right click cancels.";
+                instruction = "Hold left click: power goes up and down. Release in gold for a perfect shot. Right click cancels.";
                 break;
             default:
                 heading = "AIM YOUR SHOT";

@@ -29,7 +29,10 @@ public class BallPlayerController : MonoBehaviour
     [Tooltip("Multiplies the charge rate. 2 means the bar fills twice as fast.")]
     [SerializeField, Min(0.1f)] private float chargeSpeedMultiplier = 2f;
 
-    [Tooltip("Impulse applied when releasing at zero charge.")]
+    [Tooltip("Extra launch speed for releasing inside the marked perfect window. Aim and surface still matter.")]
+    [SerializeField, Range(0f, 0.2f)] private float perfectShotBonus = 0.08f;
+
+    [Tooltip("Impulse at zero charge, capped at 0.6 to allow gentle short putts.")]
     [SerializeField, Min(0f)] private float minimumShotForce = 4.5f;
 
     [Tooltip("Impulse applied when releasing at full charge. Rigidbody mass affects the resulting speed.")]
@@ -184,6 +187,14 @@ public class BallPlayerController : MonoBehaviour
     private Vector3 momentumReplacementTargetVelocity;
     private Vector3 momentumReplacementStartAngularVelocity;
     private GUIStyle angleLabelStyle;
+    private GUIStyle powerHintStyle;
+    private GolfShotFeedback shotFeedback;
+
+    public GolfShotFeedback ShotFeedback => shotFeedback;
+    public bool IsGrounded => IsTouchingGround();
+    public bool IsCharging => isCharging;
+    public bool IsHoleComplete => holeCompleted;
+    public Vector3 Velocity => ballRigidbody != null ? GetBallVelocity() : Vector3.zero;
 
     /// <summary>Number of shots successfully fired during this round.</summary>
     public int StrokeCount { get; private set; }
@@ -216,7 +227,7 @@ public class BallPlayerController : MonoBehaviour
 
             float duration = Mathf.Max(0.01f, maxChargeTime);
             float speed = Mathf.Max(0.1f, chargeSpeedMultiplier);
-            return Mathf.Clamp01((Time.time - chargeStartedAt) / (duration / speed));
+            return GolfShotTiming.Power(Time.time - chargeStartedAt, duration / speed);
         }
     }
 
@@ -236,11 +247,25 @@ public class BallPlayerController : MonoBehaviour
 
         if (aimCamera == null)
             aimCamera = Camera.main;
+
+        shotFeedback = GetComponent<GolfShotFeedback>();
+        if (shotFeedback == null)
+            shotFeedback = gameObject.AddComponent<GolfShotFeedback>();
     }
 
     private void OnDisable()
     {
+        if (isCharging)
+            CancelShot();
+        if (shotFeedback != null)
+            shotFeedback.CancelPresentation();
         StopRollingSound();
+    }
+
+    private void OnApplicationFocus(bool focused)
+    {
+        if (!focused && isCharging)
+            CancelShot();
     }
 
     private void OnDestroy()
@@ -281,6 +306,8 @@ public class BallPlayerController : MonoBehaviour
 
     private void Update()
     {
+        if (holeCompleted || ballRigidbody == null || ballRigidbody.isKinematic)
+            return;
         if (Time.timeScale <= 0f)
         {
             if (isCharging)
@@ -306,8 +333,12 @@ public class BallPlayerController : MonoBehaviour
         if (aimCamera != null)
         {
             ThirdPersonCameraController cameraController = aimCamera.GetComponent<ThirdPersonCameraController>();
-            if (cameraController != null && cameraController.CursorCapturedThisFrame)
+            if (cameraController != null && (cameraController.CursorCapturedThisFrame || !cameraController.IsCursorLocked))
+            {
+                if (isCharging)
+                    CancelShot();
                 return;
+            }
         }
 
         // Check cancellation first so a right click wins if both buttons change this frame.
@@ -328,6 +359,8 @@ public class BallPlayerController : MonoBehaviour
             if (!IsTouchingGround())
                 return;
 
+            if (shotFeedback != null)
+                shotFeedback.PrepareToCharge();
             isCharging = true;
             showAngleIndicator = true;
             lastAngleIndicatorInputTime = Time.unscaledTime;
@@ -336,7 +369,7 @@ public class BallPlayerController : MonoBehaviour
             PlayBallSound(chargeStartSound, smallCueVolume);
         }
 
-        if (isCharging && !fullChargeSoundPlayed && ChargeProgress >= 1f)
+        if (isCharging && !fullChargeSoundPlayed && ChargeProgress >= GolfShotTiming.PerfectStart)
         {
             fullChargeSoundPlayed = true;
             PlayBallSound(fullChargeSound, smallCueVolume);
@@ -567,7 +600,8 @@ public class BallPlayerController : MonoBehaviour
         }
 
         UpdateSurface();
-        float shotForce = Mathf.Lerp(minimumShotForce, maximumShotForce, power) * shotForceMultiplier
+        bool perfect = GolfShotTiming.IsPerfect(power);
+        float shotForce = GolfShotTiming.Force(power, minimumShotForce, maximumShotForce, perfectShotBonus) * shotForceMultiplier
             * shotDistanceBoost * LiePowerMultiplier();
         Vector3 shotDirection = GetShotDirection();
         StrokeCount++;
@@ -594,11 +628,13 @@ public class BallPlayerController : MonoBehaviour
         else
         {
             ballRigidbody.angularVelocity = Vector3.zero;
-            ballRigidbody.AddForce(shotDirection * shotForce, ForceMode.Impulse);
+            SetBallVelocity(targetVelocity);
         }
 
         ballRigidbody.WakeUp();
-        PlayBallSound(shotLaunchSound, shotSoundVolume);
+        PlayBallSound(shotLaunchSound, shotSoundVolume * Mathf.Lerp(0.32f, 1f, power));
+        if (shotFeedback != null)
+            shotFeedback.Launch(power, perfect, targetVelocity, perfectShotBonus);
     }
 
     /// <summary>Stops further shots while leaving Rigidbody motion active so the ball can sink.</summary>
@@ -631,6 +667,8 @@ public class BallPlayerController : MonoBehaviour
     /// <summary>Places the ball at the next tee and restores shot control for a new hole.</summary>
     public void ResetForNextHole(Vector3 position, Quaternion rotation)
     {
+        if (shotFeedback != null)
+            shotFeedback.CancelPresentation();
         if (ballRigidbody == null)
             ballRigidbody = GetComponent<Rigidbody>();
 
@@ -669,6 +707,12 @@ public class BallPlayerController : MonoBehaviour
             ballRigidbody.WakeUp();
 
         enabled = true;
+        if (aimCamera != null)
+        {
+            var cameraController = aimCamera.GetComponent<ThirdPersonCameraController>();
+            if (cameraController != null)
+                cameraController.SnapFollowToTarget();
+        }
     }
 
     /// <summary>
@@ -684,9 +728,12 @@ public class BallPlayerController : MonoBehaviour
 
     private void OnCollisionEnter(Collision collision)
     {
+        bool wasGrounded = IsTouchingGround();
         UpdateGroundContact(collision);
         ApplyLandingFeel(collision);
         PlayImpactSound(collision);
+        if (!wasGrounded && IsTouchingGround() && shotFeedback != null)
+            shotFeedback.Land(collision);
     }
 
     private void OnCollisionStay(Collision collision)
@@ -927,10 +974,10 @@ public class BallPlayerController : MonoBehaviour
         float edgeMargin = 16f * uiScale;
         float width = Mathf.Min(Mathf.Max(290f, powerBarSize.x) * uiScale,
             Mathf.Max(1f, Screen.width - edgeMargin * 2f));
-        float height = Mathf.Max(50f, powerBarSize.y + 26f) * uiScale;
+        float height = Mathf.Max(82f, powerBarSize.y + 58f) * uiScale;
         float shakeX = 0f;
         float shakeY = 0f;
-        bool fullyCharged = progress >= 1f;
+        bool fullyCharged = GolfShotTiming.IsPerfect(progress);
 
         if (fullyCharged)
         {
@@ -943,18 +990,31 @@ public class BallPlayerController : MonoBehaviour
         float y = Screen.height - HudBottomOffset - height + shakeY;
         Rect shell = new Rect(x, y, width, height);
         float pulse = 0.5f + 0.5f * Mathf.Sin(Time.unscaledTime * 8f);
-        Color fillColor = GetPowerColor(progress, pulse);
+        Color fillColor = fullyCharged ? new Color(1f, 0.85f, 0.25f) : GetPowerColor(progress, pulse);
 
         if (fullyCharged)
             FrutigerAeroUI.DrawPill(new Rect(x - 9f * uiScale, y - 8f * uiScale, width + 18f * uiScale, height + 16f * uiScale),
-                new Color(1f, 0.21f, 0.28f, 0.12f + pulse * 0.17f));
+                new Color(1f, 0.85f, 0.25f, 0.12f + pulse * 0.17f));
 
         FrutigerAeroUI.DrawGlassPanel(shell,
-            fullyCharged ? Color.Lerp(FrutigerAeroUI.Coral, Color.white, pulse * 0.12f) : FrutigerAeroUI.Cyan,
+            fullyCharged ? new Color(1f, 0.84f, 0.22f) : FrutigerAeroUI.Cyan,
             new Color(0.80f, 0.96f, 1f, 0.94f), 0.18f);
 
-        Rect track = new Rect(shell.x + 15f * uiScale, shell.y + 17f * uiScale, shell.width - 30f * uiScale, shell.height - 29f * uiScale);
+        Rect track = new Rect(shell.x + 15f * uiScale, shell.y + 31f * uiScale, shell.width - 30f * uiScale, 21f * uiScale);
         FrutigerAeroUI.DrawProgressTrack(track, progress, fillColor, fullyCharged);
+
+        float perfectX = track.x + track.width * GolfShotTiming.PerfectStart;
+        float perfectWidth = track.width * (GolfShotTiming.PerfectEnd - GolfShotTiming.PerfectStart);
+        DrawRect(new Rect(perfectX, track.y - 3f * uiScale, perfectWidth, track.height + 6f * uiScale),
+            new Color(1f, 0.84f, 0.22f, 0.8f));
+        DrawRect(new Rect(track.x + track.width * progress - 2f * uiScale, track.y - 4f * uiScale,
+            4f * uiScale, track.height + 8f * uiScale), Color.white);
+
+        if (powerHintStyle == null)
+            powerHintStyle = FrutigerAeroUI.CreateStyle(12, FrutigerAeroUI.Ink);
+        powerHintStyle.fontSize = Mathf.Max(10, Mathf.RoundToInt(12f * uiScale));
+        GUI.Label(new Rect(shell.x + 6f * uiScale, shell.y + 56f * uiScale, shell.width - 12f * uiScale, 21f * uiScale),
+            "RELEASE TO SHOOT  ·  RMB CANCEL", powerHintStyle);
 
         for (int i = 1; i < 16; i++)
         {
@@ -978,7 +1038,7 @@ public class BallPlayerController : MonoBehaviour
         if (angleLabelStyle == null)
             angleLabelStyle = FrutigerAeroUI.CreateStyle(angleFontSize, FrutigerAeroUI.Ink);
 
-        float barHeight = Mathf.Max(50f, powerBarSize.y + 26f) * uiScale;
+        float barHeight = Mathf.Max(82f, powerBarSize.y + 58f) * uiScale;
         float badgeWidth = 120f * uiScale;
         float badgeHeight = 50f * uiScale;
         float badgeX = (Screen.width - badgeWidth) * 0.5f;
