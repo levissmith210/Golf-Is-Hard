@@ -427,11 +427,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 25890148f08c4b45a2942104742ce894, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GolfVictoryAudio
-  victoryMusic: {fileID: 0}
-  courseFanfare: {fileID: 0}
+  victoryMusic: {fileID: 8300000, guid: ab3fbe4b8dee43344a87950e35866873, type: 3}
+  courseFanfare: {fileID: 8300000, guid: 81ec268e58efc1149b281b6d3369c063, type: 3}
   bronzeReveal: {fileID: 0}
   silverReveal: {fileID: 0}
-  goldReveal: {fileID: 0}
+  goldReveal: {fileID: 8300000, guid: b3d8cb86987c49c4abd1f2972709caf1, type: 3}
   diamondReveal: {fileID: 0}
   newRecordSound: {fileID: 0}
   buttonHoverSound: {fileID: 0}
