@@ -1,9 +1,7 @@
 using System.Collections;
 using UnityEngine;
 
-/// <summary>
-/// Plays one looping song on the title menu, then cycles through the gameplay playlist in order.
-/// </summary>
+/// <summary>Menu/round playlists, live volume controls, and a temporary victory music crossfade.</summary>
 [RequireComponent(typeof(AudioSource))]
 public class MusicManager : MonoBehaviour
 {
@@ -23,22 +21,37 @@ public class MusicManager : MonoBehaviour
     [Tooltip("Songs play in this order, then the playlist starts over.")]
     [SerializeField] private AudioClip[] gameplaySongs = new AudioClip[0];
 
+    [Header("Victory Music")]
+    [Tooltip("Time for the final results music to replace the course playlist.")]
+    [SerializeField, Range(0f, 2f)] private float victoryCrossfadeDuration = 0.6f;
+
     private AudioSource musicSource;
+    private AudioSource victorySource;
     private bool playingGameplayMusic;
     private int nextGameplaySongIndex;
     private float normalMusicVolume = 1f;
     private Coroutine volumeFadeCoroutine;
+    private Coroutine victoryFadeCoroutine;
     private bool isPaused;
+    private bool victoryActive;
+    private bool resumeMainWasPlaying;
+    private float pauseGain = 1f;
+    private float mainGain = 1f;
+    private float victoryGain;
 
-    private void OnEnable()
-    {
-        GameSettings.MusicVolumeChanged += HandleMusicVolumeChanged;
-    }
+    public bool IsPlayingVictoryMusic => victoryActive;
+
+    private void OnEnable() => GameSettings.MusicVolumeChanged += HandleMusicVolumeChanged;
 
     private void OnDisable()
     {
         GameSettings.MusicVolumeChanged -= HandleMusicVolumeChanged;
         StopVolumeFade();
+        StopVictoryFade();
+        if (victorySource != null) victorySource.Stop();
+        victoryActive = false;
+        mainGain = 1f;
+        victoryGain = 0f;
     }
 
     private void Awake()
@@ -48,148 +61,172 @@ public class MusicManager : MonoBehaviour
         musicSource.spatialBlend = 0f;
         musicSource.ignoreListenerPause = true;
         normalMusicVolume = musicSource.volume;
-        musicSource.volume = GetNormalMusicVolume();
         musicSource.Stop();
+        ApplyVolumes();
     }
 
     private void Update()
     {
-        if (musicSource == null)
-            return;
-
-        // Keep the live title-menu song synced with its slider as well as gameplay music.
-        if (volumeFadeCoroutine == null)
-        {
-            float targetVolume = isPaused ? GetPausedMusicVolume() : GetNormalMusicVolume();
-            if (!Mathf.Approximately(musicSource.volume, targetVolume))
-                musicSource.volume = targetVolume;
-        }
-
-        if (!playingGameplayMusic)
-            return;
-
-        if (!musicSource.isPlaying)
+        ApplyVolumes();
+        if (musicSource != null && playingGameplayMusic && !victoryActive && !musicSource.isPlaying)
             PlayNextGameplaySong();
     }
 
     public void SetPaused(bool paused)
     {
-        if (musicSource == null)
-            musicSource = GetComponent<AudioSource>();
-        if (musicSource == null)
-            return;
-
+        EnsureMusicSource();
         isPaused = paused;
         StopVolumeFade();
-
-        if (isPaused)
+        if (paused)
         {
-            musicSource.volume = GetPausedMusicVolume();
+            pauseGain = pausedVolumeMultiplier;
+            ApplyVolumes();
             return;
         }
-
-        if (Mathf.Approximately(musicSource.volume, GetNormalMusicVolume()))
-            return;
-
-        if (resumeVolumeFadeDuration <= 0f)
+        if (resumeVolumeFadeDuration <= 0f || Mathf.Approximately(pauseGain, 1f))
         {
-            musicSource.volume = GetNormalMusicVolume();
-            return;
+            pauseGain = 1f;
+            ApplyVolumes();
         }
-
-        volumeFadeCoroutine = StartCoroutine(FadeVolumeToNormal());
+        else volumeFadeCoroutine = StartCoroutine(FadeVolumeToNormal());
     }
 
     private IEnumerator FadeVolumeToNormal()
     {
-        float startVolume = musicSource.volume;
+        float start = pauseGain;
         float elapsed = 0f;
-        float duration = resumeVolumeFadeDuration;
-
-        while (elapsed < duration)
+        while (elapsed < resumeVolumeFadeDuration)
         {
             elapsed += Time.unscaledDeltaTime;
-            float progress = Mathf.Clamp01(elapsed / duration);
-            musicSource.volume = Mathf.Lerp(startVolume, GetNormalMusicVolume(), Mathf.SmoothStep(0f, 1f, progress));
+            pauseGain = Mathf.Lerp(start, 1f, Mathf.SmoothStep(0f, 1f, elapsed / Mathf.Max(0.001f, resumeVolumeFadeDuration)));
+            ApplyVolumes();
             yield return null;
         }
-
-        musicSource.volume = GetNormalMusicVolume();
+        pauseGain = 1f;
+        ApplyVolumes();
         volumeFadeCoroutine = null;
     }
 
-    private float GetNormalMusicVolume()
+    private float GetNormalMusicVolume() => normalMusicVolume * musicLevelMultiplier * GameSettings.MusicVolume;
+    private float GetPausedMusicVolume() => GetNormalMusicVolume() * pausedVolumeMultiplier;
+    private void HandleMusicVolumeChanged() => ApplyVolumes();
+
+    private void ApplyVolumes()
     {
-        return normalMusicVolume * musicLevelMultiplier * GameSettings.MusicVolume;
+        float gain = isPaused ? GetPausedMusicVolume() : GetNormalMusicVolume() * pauseGain;
+        if (musicSource != null) musicSource.volume = gain * mainGain;
+        if (victorySource != null) victorySource.volume = gain * victoryGain;
     }
 
-    private float GetPausedMusicVolume()
+    private void EnsureMusicSource()
     {
-        return GetNormalMusicVolume() * pausedVolumeMultiplier;
-    }
-
-    private void HandleMusicVolumeChanged()
-    {
-        if (musicSource == null)
-            return;
-
-        if (isPaused)
-        {
-            StopVolumeFade();
-            musicSource.volume = GetPausedMusicVolume();
-            return;
-        }
-
-        if (volumeFadeCoroutine != null)
-        {
-            StopVolumeFade();
-            if (resumeVolumeFadeDuration > 0f
-                && !Mathf.Approximately(musicSource.volume, GetNormalMusicVolume()))
-            {
-                volumeFadeCoroutine = StartCoroutine(FadeVolumeToNormal());
-            }
-            else
-            {
-                musicSource.volume = GetNormalMusicVolume();
-            }
-            return;
-        }
-
-        musicSource.volume = GetNormalMusicVolume();
+        if (musicSource == null) musicSource = GetComponent<AudioSource>();
     }
 
     private void StopVolumeFade()
     {
-        if (volumeFadeCoroutine == null)
-            return;
-
+        if (volumeFadeCoroutine == null) return;
         StopCoroutine(volumeFadeCoroutine);
         volumeFadeCoroutine = null;
     }
 
+    private void StopVictoryFade()
+    {
+        if (victoryFadeCoroutine == null) return;
+        StopCoroutine(victoryFadeCoroutine);
+        victoryFadeCoroutine = null;
+    }
+
+    /// <summary>Temporarily replaces the playlist. Assigned menu and gameplay songs remain untouched.</summary>
+    public void BeginVictoryMusic(AudioClip clip)
+    {
+        if (clip == null) return;
+        EnsureMusicSource();
+        if (victoryActive && victorySource != null && victorySource.clip == clip) return;
+        if (!victoryActive) resumeMainWasPlaying = musicSource != null && musicSource.isPlaying;
+        StopVictoryFade();
+        if (victorySource == null)
+        {
+            victorySource = gameObject.AddComponent<AudioSource>();
+            victorySource.playOnAwake = false;
+            victorySource.spatialBlend = 0f;
+            victorySource.ignoreListenerPause = true;
+        }
+        victorySource.clip = clip;
+        victorySource.loop = true;
+        victoryActive = true;
+        ApplyVolumes();
+        victorySource.Play();
+        victoryFadeCoroutine = StartCoroutine(FadeVictoryMix(true));
+    }
+
+    public void EndVictoryMusic()
+    {
+        if (!victoryActive) return;
+        StopVictoryFade();
+        victoryActive = false;
+        if (resumeMainWasPlaying && musicSource != null && musicSource.clip != null) musicSource.UnPause();
+        victoryFadeCoroutine = StartCoroutine(FadeVictoryMix(false));
+    }
+
+    private IEnumerator FadeVictoryMix(bool entering)
+    {
+        float startMain = mainGain, startVictory = victoryGain;
+        float duration = Mathf.Max(0.001f, victoryCrossfadeDuration);
+        float elapsed = 0f;
+        while (elapsed < duration)
+        {
+            elapsed += Time.unscaledDeltaTime;
+            float t = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(elapsed / duration));
+            mainGain = Mathf.Lerp(startMain, entering ? 0f : 1f, t);
+            victoryGain = Mathf.Lerp(startVictory, entering ? 1f : 0f, t);
+            ApplyVolumes();
+            yield return null;
+        }
+        mainGain = entering ? 0f : 1f;
+        victoryGain = entering ? 1f : 0f;
+        ApplyVolumes();
+        if (entering)
+        {
+            if (musicSource != null) musicSource.Pause();
+        }
+        else if (victorySource != null)
+        {
+            victorySource.Stop();
+            victorySource.clip = null;
+        }
+        victoryFadeCoroutine = null;
+    }
+
+    private void CancelVictoryForPlaylist()
+    {
+        StopVictoryFade();
+        victoryActive = false;
+        mainGain = 1f;
+        victoryGain = 0f;
+        resumeMainWasPlaying = false;
+        if (victorySource != null) { victorySource.Stop(); victorySource.clip = null; }
+    }
+
     public void PlayMenuMusic()
     {
+        CancelVictoryForPlaylist();
         playingGameplayMusic = false;
-        if (musicSource == null)
-            musicSource = GetComponent<AudioSource>();
-        if (musicSource == null)
-            return;
-
+        EnsureMusicSource();
+        if (musicSource == null) return;
         SetPaused(false);
         musicSource.Stop();
         musicSource.loop = true;
         musicSource.clip = menuSong;
-        if (menuSong != null)
-            musicSource.Play();
+        ApplyVolumes();
+        if (menuSong != null) musicSource.Play();
     }
 
     public void PlayGameplayMusic()
     {
-        if (musicSource == null)
-            musicSource = GetComponent<AudioSource>();
-        if (musicSource == null)
-            return;
-
+        CancelVictoryForPlaylist();
+        EnsureMusicSource();
+        if (musicSource == null) return;
         SetPaused(false);
         musicSource.Stop();
         musicSource.loop = false;
@@ -206,21 +243,18 @@ public class MusicManager : MonoBehaviour
             musicSource.Stop();
             return;
         }
-
         for (int checkedSongs = 0; checkedSongs < gameplaySongs.Length; checkedSongs++)
         {
             AudioClip clip = gameplaySongs[nextGameplaySongIndex];
             nextGameplaySongIndex = (nextGameplaySongIndex + 1) % gameplaySongs.Length;
-            if (clip == null)
-                continue;
-
+            if (clip == null) continue;
             musicSource.clip = clip;
             musicSource.loop = false;
             musicSource.Play();
             return;
         }
-
         playingGameplayMusic = false;
         musicSource.Stop();
     }
 }
+

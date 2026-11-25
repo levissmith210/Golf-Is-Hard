@@ -43,6 +43,7 @@ public static class GolfShotFeelChecks
     {
         results.Clear();
         float initialFixedStep = Time.fixedDeltaTime;
+        string scoreCheckId = "shot-feel-check-" + Guid.NewGuid().ToString("N");
         try
         {
             Check(Mathf.Approximately(GolfShotTiming.Power(0f, 1f), 0f), "Meter begins at zero");
@@ -59,6 +60,7 @@ public static class GolfShotFeelChecks
             var ball = UnityEngine.Object.FindFirstObjectByType<BallPlayerController>();
             var pause = UnityEngine.Object.FindFirstObjectByType<PauseMenu>();
             Check(course != null && ball != null && pause != null, "Live course, ball and pause menu found");
+            Set(course.Scorecard, "records", new GolfScoreRecords(scoreCheckId, course.TotalHoleCount));
             Set(course, "playTutorialOnStart", false);
             Call(course, "BeginGameplay");
             await Wait(0.7f);
@@ -170,6 +172,7 @@ public static class GolfShotFeelChecks
                 "Hazard return keeps penalties and clears the trail across teleportation");
 
             PlaceAtCup(ball, hole, Vector3.forward * 3f);
+            typeof(BallPlayerController).GetProperty("StrokeCount").SetValue(ball, 1);
             course.HandleHoleEntered(hole, ball);
             Check(ball.IsHoleComplete && !ball.enabled && !feedback.IsCupMomentActive && Time.timeScale == 1f,
                 "Cup capture stops shots and restores normal time");
@@ -188,6 +191,8 @@ public static class GolfShotFeelChecks
         }
         finally
         {
+            PlayerPrefs.DeleteKey(GolfScoreRecords.StorageKeyFor(scoreCheckId));
+            PlayerPrefs.Save();
             GolfShotFeedback.CancelActiveCinematics();
             Time.timeScale = 1f;
             Time.fixedDeltaTime = initialFixedStep;

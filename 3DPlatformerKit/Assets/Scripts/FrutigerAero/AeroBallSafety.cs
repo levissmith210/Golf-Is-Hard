@@ -2,8 +2,8 @@ using System.Collections;
 using UnityEngine;
 
 /// <summary>
-/// Remembers where the ball last came to rest on solid ground, and puts it back there
-/// (with a penalty stroke) when it lands in an <see cref="AeroHazard"/> or falls out of the world.
+/// Records a nearby resting point, relative to moving ground when appropriate,
+/// then returns the ball there with a penalty after water or out-of-bounds hits.
 /// </summary>
 [DisallowMultipleComponent]
 [RequireComponent(typeof(BallPlayerController))]
@@ -14,10 +14,18 @@ public class AeroBallSafety : MonoBehaviour
     [SerializeField] private float failsafeY = -25f;
     [SerializeField, Min(0f)] private float messageSeconds = 1.8f;
 
+    private struct SupportCheckpoint
+    {
+        public Vector3 worldPosition;
+        public Transform support;
+        public Vector3 localPosition;
+        public bool usesSupport;
+    }
+
     private BallPlayerController ball;
     private Rigidbody body;
     private SphereCollider sphere;
-    private Vector3 safeSpot, teeSpot;
+    private SupportCheckpoint safePoint, teePoint;
     private bool hasSafeSpot, hasTeeSpot;
     private bool landedSinceReset = true;
     private float restTimer;
@@ -26,18 +34,38 @@ public class AeroBallSafety : MonoBehaviour
     private string message;
     private float messageUntil;
     private GUIStyle style, shadow;
+    private bool floating;
+    private bool gravityBeforeFloat;
+    private float floatSurfaceY;
 
-    public Vector3 SafeSpot => safeSpot;
+    public Vector3 SafeSpot
+    {
+        get
+        {
+            if (hasSafeSpot && TryResolve(safePoint, out Vector3 safe, out _))
+                return safe;
+            if (hasTeeSpot && TryResolve(teePoint, out Vector3 tee, out _))
+                return tee;
+            return hasTeeSpot ? teePoint.worldPosition : safePoint.worldPosition;
+        }
+    }
     public bool IsResetting => resetting;
 
     private void Awake()
     {
-        ball = GetComponent<BallPlayerController>();
-        body = GetComponent<Rigidbody>();
-        sphere = GetComponent<SphereCollider>();
+        ResolveReferences();
     }
 
-    private float Radius => sphere != null ? sphere.radius * Mathf.Max(transform.lossyScale.x, 0.01f) : 0.25f;
+    private void ResolveReferences()
+    {
+        if (ball == null) ball = GetComponent<BallPlayerController>();
+        if (body == null) body = GetComponent<Rigidbody>();
+        if (sphere == null) sphere = GetComponent<SphereCollider>();
+    }
+
+    private float Radius => sphere != null
+        ? sphere.radius * Mathf.Max(Mathf.Abs(transform.lossyScale.x), Mathf.Abs(transform.lossyScale.y), Mathf.Abs(transform.lossyScale.z))
+        : 0.25f;
 
     private Vector3 Velocity
     {
@@ -51,28 +79,36 @@ public class AeroBallSafety : MonoBehaviour
         }
     }
 
-    // floating in water while waiting to be returned
-    private bool floating;
-    private float floatSurfaceY;
-
     private void FixedUpdate()
     {
         if (floating && body != null && !body.isKinematic)
             Float();
 
-        if (resetting || body == null || body.isKinematic)
+        if (resetting || body == null || body.isKinematic || ball == null || !ball.enabled)
             return;
 
-        if (hazardContacts == 0 && Velocity.magnitude < restSpeed && Grounded())
+        if (hazardContacts == 0 && TryGetGround(out RaycastHit ground))
         {
-            restTimer += Time.fixedDeltaTime;
-            if (restTimer >= restTime)
+            Rigidbody support = ground.rigidbody;
+            Vector3 supportVelocity = support != null ? support.GetPointVelocity(body.position) : Vector3.zero;
+            if ((Velocity - supportVelocity).magnitude < restSpeed)
             {
-                safeSpot = body.position;
-                hasSafeSpot = true;
-                // Resting before the first shot means we're on the tee.
-                if (ball.StrokeCount == 0) { teeSpot = body.position; hasTeeSpot = true; }
-                landedSinceReset = true;
+                restTimer += Time.fixedDeltaTime;
+                if (restTimer >= restTime)
+                {
+                    safePoint = Capture(body.position, support);
+                    hasSafeSpot = true;
+                    if (ball.StrokeCount == 0)
+                    {
+                        teePoint = safePoint;
+                        hasTeeSpot = true;
+                    }
+                    landedSinceReset = true;
+                }
+            }
+            else
+            {
+                restTimer = 0f;
             }
         }
         else
@@ -84,37 +120,98 @@ public class AeroBallSafety : MonoBehaviour
             StartCoroutine(ReturnRoutine(0f, 1, "Out of bounds!"));
     }
 
-    /// <summary>Buoyancy: ease the ball up to the waterline, bob gently, and let water drag slow its drift and spin.</summary>
+    /// <summary>
+    /// Called for a real restart or new tee. Hazard returns deliberately retain these checkpoints.
+    /// Canceling delayed returns prevents an old water recovery from teleporting a new round.
+    /// </summary>
+    public void ResetCheckpoint(Vector3 spawn)
+    {
+        ResolveReferences();
+        StopAllCoroutines();
+        RestoreFloatGravity();
+        resetting = false;
+        hazardContacts = 0;
+        restTimer = 0f;
+        landedSinceReset = true;
+        message = null;
+        messageUntil = 0f;
+        safePoint = teePoint = Capture(spawn, null);
+        hasSafeSpot = hasTeeSpot = true;
+
+        // The ball has just been teleported. Synchronize once so an actual moving tee
+        // can be recorded in its own coordinates, even before the first resting frame.
+        Physics.SyncTransforms();
+        if (body != null && TryGetGround(out RaycastHit ground))
+            safePoint = teePoint = Capture(spawn, ground.rigidbody);
+    }
+
+    private SupportCheckpoint Capture(Vector3 position, Rigidbody support)
+    {
+        bool tracksSupport = support != null && support != body;
+        return new SupportCheckpoint
+        {
+            worldPosition = position,
+            support = tracksSupport ? support.transform : null,
+            localPosition = tracksSupport ? support.transform.InverseTransformPoint(position) : position,
+            usesSupport = tracksSupport
+        };
+    }
+
+    private static bool TryResolve(SupportCheckpoint checkpoint, out Vector3 position, out Rigidbody support)
+    {
+        support = null;
+        position = checkpoint.worldPosition;
+        if (!checkpoint.usesSupport)
+            return true;
+        if (checkpoint.support == null || !checkpoint.support.gameObject.activeInHierarchy)
+            return false;
+
+        position = checkpoint.support.TransformPoint(checkpoint.localPosition);
+        support = checkpoint.support.GetComponent<Rigidbody>();
+        return true;
+    }
+
+    private bool TryGetGround(out RaycastHit hit)
+    {
+        if (body != null && Physics.Raycast(body.position, Vector3.down, out hit,
+            Radius + 0.12f, ~0, QueryTriggerInteraction.Ignore))
+            return hit.rigidbody != body && Vector3.Dot(hit.normal, Vector3.up) >= 0.55f;
+        hit = default;
+        return false;
+    }
+
     private void Float()
     {
         float target = floatSurfaceY - Radius * 0.35f + Mathf.Sin(Time.time * 3.2f) * 0.035f;
-        Vector3 v = Velocity;
-        float vy = Mathf.Lerp(v.y, (target - body.position.y) * 6f, 0.25f);
-        Vector3 drift = new Vector3(v.x, 0f, v.z) * 0.94f;
+        Vector3 velocity = Velocity;
+        float vy = Mathf.Lerp(velocity.y, (target - body.position.y) * 6f, 0.25f);
+        Vector3 drift = new Vector3(velocity.x, 0f, velocity.z) * 0.94f;
         SetVelocity(new Vector3(drift.x, vy, drift.z));
         body.angularVelocity *= 0.9f;
     }
 
-    private void SetVelocity(Vector3 v)
+    private void RestoreFloatGravity()
     {
-#if UNITY_6000_0_OR_NEWER
-        body.linearVelocity = v;
-#else
-        body.velocity = v;
-#endif
+        if (floating && body != null)
+            body.useGravity = gravityBeforeFloat;
+        floating = false;
     }
 
-    private bool Grounded()
+    private void SetVelocity(Vector3 velocity)
     {
-        return Physics.Raycast(body.position, Vector3.down, Radius + 0.12f, ~0, QueryTriggerInteraction.Ignore);
+#if UNITY_6000_0_OR_NEWER
+        body.linearVelocity = velocity;
+#else
+        body.velocity = velocity;
+#endif
     }
 
     private void OnTriggerEnter(Collider other)
     {
-        var hazard = other.GetComponentInParent<AeroHazard>();
+        AeroHazard hazard = other.GetComponentInParent<AeroHazard>();
         if (hazard == null) return;
         hazardContacts++;
-        if (!resetting && ball.enabled)
+        if (!resetting && ball != null && ball.enabled)
             StartCoroutine(ReturnRoutine(hazard.resetDelay, hazard.penaltyStrokes, hazard.label,
                 hazard.floats ? hazard.WaterSurfaceY : float.NaN));
     }
@@ -132,27 +229,35 @@ public class AeroBallSafety : MonoBehaviour
         messageUntil = Time.time + delay + messageSeconds;
         if (!float.IsNaN(waterSurfaceY) && body != null)
         {
+            gravityBeforeFloat = body.useGravity;
             floating = true;
             floatSurfaceY = waterSurfaceY;
-            body.useGravity = false; // buoyancy takes over (also stops the ball's extra airborne gravity)
+            body.useGravity = false;
         }
         if (delay > 0f)
             yield return new WaitForSeconds(delay);
-        if (floating)
-        {
-            floating = false;
-            if (body != null) body.useGravity = true;
-        }
+        RestoreFloatGravity();
 
-        // The hole may have been finished or restarted while we waited.
-        if (ball.enabled && (hasSafeSpot || hasTeeSpot))
+        if (ball != null && ball.enabled && (hasSafeSpot || hasTeeSpot))
         {
-            // If the last return never came to rest before hitting a hazard again, that spot isn't safe: use the tee.
             bool useTee = (!landedSinceReset || !hasSafeSpot) && hasTeeSpot;
-            ball.ReturnToSafeSpot((useTee ? teeSpot : safeSpot) + Vector3.up * 0.05f, penalty);
+            SupportCheckpoint checkpoint = useTee ? teePoint : safePoint;
+            if (!TryResolve(checkpoint, out Vector3 destination, out Rigidbody support))
+            {
+                // A removed or disabled moving deck is no longer a safe landing point.
+                if (!hasTeeSpot || !TryResolve(teePoint, out destination, out support))
+                {
+                    destination = teePoint.worldPosition;
+                    support = null;
+                }
+            }
+
+            Vector3 supportVelocity = support != null ? support.GetPointVelocity(destination) : Vector3.zero;
+            ball.ReturnToSafeSpot(destination + Vector3.up * 0.05f, penalty);
+            if (body != null && !body.isKinematic)
+                SetVelocity(supportVelocity);
         }
         landedSinceReset = false;
-
         hazardContacts = 0;
         restTimer = 0f;
         resetting = false;
@@ -169,8 +274,8 @@ public class AeroBallSafety : MonoBehaviour
             shadow = new GUIStyle(style);
             shadow.normal.textColor = new Color(0.02f, 0.25f, 0.45f, 0.85f);
         }
-        var r = new Rect(0f, Screen.height * 0.22f, Screen.width, 60f);
-        GUI.Label(new Rect(r.x + 2f, r.y + 3f, r.width, r.height), message, shadow);
-        GUI.Label(r, message, style);
+        Rect rect = new Rect(0f, Screen.height * 0.22f, Screen.width, 60f);
+        GUI.Label(new Rect(rect.x + 2f, rect.y + 3f, rect.width, rect.height), message, shadow);
+        GUI.Label(rect, message, style);
     }
 }

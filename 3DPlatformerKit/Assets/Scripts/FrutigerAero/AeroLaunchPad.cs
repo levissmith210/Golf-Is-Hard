@@ -29,6 +29,7 @@ public class AeroLaunchPad : MonoBehaviour
 
     public static bool debugLog;
     public float LastFlightTime { get; private set; }
+    public event System.Action<BallPlayerController, Vector3, Vector3, float> Launched;
     private float lastLaunch;
 
     private void Awake() { GetComponent<Collider>().isTrigger = true; }
@@ -67,6 +68,7 @@ public class AeroLaunchPad : MonoBehaviour
         rb.angularVelocity = Vector3.zero;
         LastFlightTime = d / Mathf.Max(0.01f, Mathf.Sqrt(v2) * Mathf.Cos(a));
         flying = rb; landAfter = Time.time + LastFlightTime * 0.7f; giveUpAt = Time.time + LastFlightTime * 2.5f + 1f;
+        Launched?.Invoke(ball, from, vel, LastFlightTime);
         if (debugLog) Debug.Log($"[AeroLaunchPad] {name} -> {target.name}: v={vel.magnitude:F1} angle={(angle - 5f):F0} d={d:F1} h={h:F1} T={LastFlightTime:F2}");
     }
 }

@@ -32,6 +32,9 @@ public class GolfCourseManager : MonoBehaviour
 
         [Tooltip("Assign a Golf Tee prefab root or a ball spawn Transform. Tee prefabs use their Ball Spawn Point child.")]
         public Transform teePoint;
+
+        [Tooltip("0 reads par from the hole's course label; set a value to override it.")]
+        [Range(0, 9)] public int parOverride;
     }
 
     [Header("Course Order")]
@@ -100,11 +103,56 @@ public class GolfCourseManager : MonoBehaviour
     private bool tutorialAngleShotUnlocked;
     private float tutorialLookStartTime = -1f;
     private float tutorialCourseTransitionTime = -1f;
+    private const float TutorialSkipHoldSeconds = 1.2f;
+    private float tutorialSkipHeld;
+    private bool tutorialAdvanceOnRelease;
+    private GUIStyle tutorialSkipStyle;
+
+    public bool IsInTutorial => tutorialMode;
+    public float TutorialSkipProgress => Mathf.Clamp01(tutorialSkipHeld / TutorialSkipHoldSeconds);
 
     public int ActiveHoleNumber => activeHoleIndex + 1;
     public int TotalHoleCount => holesInOrder != null ? holesInOrder.Length : 0;
     public bool IsCourseComplete => courseComplete;
+    public AudioClip CompletionSound => courseCompleteSound;
     public HoleTrigger ActiveHole => GetActiveStage()?.hole;
+    public bool IsGameplayActive => !showingStartMenu && !IsShowingResults && !courseComplete;
+    public GolfScorecard Scorecard { get; private set; }
+    public GolfRiskBubbles RiskBubbles { get; private set; }
+    public bool IsPlayingCourse => !showingStartMenu && !tutorialMode && !awaitingNextHole && !courseComplete;
+    public bool IsShowingResults => Scorecard != null && Scorecard.ShowingResult;
+    public BallPlayerController Ball => ball;
+
+    public int GetHolePar(int index)
+    {
+        if (index < 0 || index >= TotalHoleCount) return 3;
+        HoleStage stage = holesInOrder[index];
+        if (stage.parOverride > 0) return stage.parOverride;
+        for (Transform t = stage.hole != null ? stage.hole.transform : null; t != null; t = t.parent)
+        {
+            int start = t.name.IndexOf("(Par ", StringComparison.OrdinalIgnoreCase);
+            if (start >= 0)
+            {
+                string text = t.name.Substring(start + 5).TrimEnd(')', ' ');
+                if (int.TryParse(text, out int par)) return Mathf.Clamp(par, 1, 9);
+            }
+        }
+        return 3;
+    }
+
+    public string GetHoleTitle(int index)
+    {
+        if (index < 0 || index >= TotalHoleCount) return "Practice";
+        for (Transform t = holesInOrder[index].hole != null ? holesInOrder[index].hole.transform : null; t != null; t = t.parent)
+        {
+            int dash = t.name.IndexOf(" - ", StringComparison.Ordinal);
+            if (dash < 0) continue;
+            string title = t.name.Substring(dash + 3);
+            int par = title.IndexOf(" (Par ", StringComparison.OrdinalIgnoreCase);
+            return par >= 0 ? title.Substring(0, par) : title;
+        }
+        return "Hole " + (index + 1);
+    }
 
     private void Awake()
     {
@@ -124,6 +172,12 @@ public class GolfCourseManager : MonoBehaviour
 
         AssignCourseManagerToStages(holesInOrder);
         AssignCourseManagerToStages(tutorialHoles);
+        RiskBubbles = GetComponent<GolfRiskBubbles>();
+        if (RiskBubbles == null) RiskBubbles = gameObject.AddComponent<GolfRiskBubbles>();
+        RiskBubbles.Configure(this);
+        Scorecard = GetComponent<GolfScorecard>();
+        if (Scorecard == null) Scorecard = gameObject.AddComponent<GolfScorecard>();
+        Scorecard.Configure(this);
     }
 
     private void Start()
@@ -135,7 +189,7 @@ public class GolfCourseManager : MonoBehaviour
 
         if (autoStartTutorial)
         {
-            if (!CanRunTutorial())
+            if (!HasTutorialStages())
             {
                 Debug.LogError("The tutorial scene needs two tutorial stages, a ball, and a camera assigned.", this);
                 showStartMenuOnLaunch = true;
@@ -170,7 +224,9 @@ public class GolfCourseManager : MonoBehaviour
 
     private void StartGameplayFromScene()
     {
+        Scorecard.ResetRound();
         SetGameplayEnabled(true);
+        BeginScoredHole();
         if (musicManager != null)
             musicManager.PlayGameplayMusic();
         if (cameraController != null)
@@ -204,6 +260,16 @@ public class GolfCourseManager : MonoBehaviour
             return;
         }
 
+        if (IsShowingResults)
+        {
+            if (Time.timeScale > 0f && Scorecard.ReadyForAction && Input.GetKeyDown(KeyCode.Space))
+                ContinueAfterScorecard();
+            return;
+        }
+
+        if (tutorialMode && UpdateTutorialSkipHold(Application.isFocused && Input.GetKey(KeyCode.Space), Time.unscaledDeltaTime))
+            return;
+
         if (tutorialCourseTransitionTime >= 0f)
         {
             if (Time.timeScale > 0f && Time.unscaledTime >= tutorialCourseTransitionTime)
@@ -220,7 +286,19 @@ public class GolfCourseManager : MonoBehaviour
         if (!awaitingNextHole || Time.timeScale <= 0f)
             return;
 
-        if (Input.GetKeyDown(KeyCode.Space))
+        if (tutorialMode)
+        {
+            // A tap advances a practice hole on release; a hold skips the entire
+            // tutorial without first jumping to the next practice tee.
+            if (Input.GetKeyDown(KeyCode.Space))
+                tutorialAdvanceOnRelease = true;
+            if (Input.GetKeyUp(KeyCode.Space) && tutorialAdvanceOnRelease)
+            {
+                tutorialAdvanceOnRelease = false;
+                AdvanceToNextHole();
+            }
+        }
+        else if (Input.GetKeyDown(KeyCode.Space))
             AdvanceToNextHole();
     }
     private void OnGUI()
@@ -233,6 +311,12 @@ public class GolfCourseManager : MonoBehaviour
 
         if (Time.timeScale <= 0f)
             return;
+
+        if (IsShowingResults)
+            return;
+
+        if (tutorialMode)
+            DrawTutorialSkipPrompt();
 
         if (awaitingNextHole)
         {
@@ -251,7 +335,7 @@ public class GolfCourseManager : MonoBehaviour
                 keyWidth, prompt.height - 18f * scale);
             FrutigerAeroUI.DrawPill(key, new Color(0.1f, 0.57f, 0.86f, 1f));
             nextHolePromptShadowStyle.fontSize = Mathf.RoundToInt(12f * scale);
-            GUI.Label(key, "PRESS SPACE", nextHolePromptShadowStyle);
+            GUI.Label(key, tutorialMode ? "TAP SPACE" : "PRESS SPACE", nextHolePromptShadowStyle);
 
             nextHolePromptStyle.fontSize = Mathf.RoundToInt(16f * scale);
             Rect message = new Rect(key.xMax + 6f * scale, prompt.y,
@@ -267,6 +351,10 @@ public class GolfCourseManager : MonoBehaviour
     }
     private void PrepareStartMenu()
     {
+        if (cameraController != null)
+            cameraController.SetPresentationInputBlocked(false);
+        Scorecard.ResetRound();
+        RiskBubbles.Clear();
         SetGameplayEnabled(false);
         if (musicManager != null)
             musicManager.PlayMenuMusic();
@@ -300,6 +388,7 @@ public class GolfCourseManager : MonoBehaviour
         }
 
         showingStartMenu = false;
+        Scorecard.ResetRound();
         HoleStage firstStage = GetActiveStage();
         if (ball != null && firstStage != null && firstStage.teePoint != null)
         {
@@ -324,11 +413,19 @@ public class GolfCourseManager : MonoBehaviour
         if (CanRunTutorial())
             StartTutorial();
         else
+        {
             CompleteTutorial();
+            BeginScoredHole();
+        }
     }
     private bool CanRunTutorial()
     {
-        return playTutorialOnStart && tutorialHoles != null &&
+        return playTutorialOnStart && HasTutorialStages();
+    }
+
+    private bool HasTutorialStages()
+    {
+        return tutorialHoles != null &&
                tutorialHoles.Length >= 2 &&
                IsValidStage(tutorialHoles[0]) && IsValidStage(tutorialHoles[1]) &&
                ball != null && cameraController != null;
@@ -336,6 +433,9 @@ public class GolfCourseManager : MonoBehaviour
 
     private void StartTutorial()
     {
+        ResetTutorialSkipHold();
+        RiskBubbles.Clear();
+        Scorecard.HideResults();
         tutorialMode = true;
         activeTutorialHoleIndex = 0;
         tutorialStep = TutorialStep.LookAround;
@@ -351,6 +451,8 @@ public class GolfCourseManager : MonoBehaviour
         ball.ResetForNextHole(spawnPoint.position, spawnPoint.rotation);
         ball.SetTutorialControlAccess(false, false);
         cameraController.SetTutorialInputAccess(true, false, false, true);
+        cameraController.SetPresentationInputBlocked(false);
+        cameraController.LockMouse();
         cameraController.SnapFollowToTarget();
     }
 
@@ -507,7 +609,7 @@ public class GolfCourseManager : MonoBehaviour
     {
         if (settingsOpen)
         {
-            if (GameSettings.DrawSettingsMenu())
+            if (GameSettings.DrawSettingsMenu(ReplayTutorial))
             {
                 settingsOpen = false;
                 GameSettings.Save();
@@ -550,7 +652,7 @@ public class GolfCourseManager : MonoBehaviour
         Rect detail = new Rect(panel.center.x - detailWidth * 0.5f, panel.y + 218f * scale,
             detailWidth, 31f * scale);
         FrutigerAeroUI.DrawPill(detail, new Color(0.76f, 0.95f, 0.99f, 0.72f));
-        GUI.Label(detail, "9 HOLES   •   1 BALL   •   BLUE SKIES", startDetailStyle);
+        GUI.Label(detail, Scorecard != null ? Scorecard.MenuSummary : "9 HOLES   •   1 BALL   •   BLUE SKIES", startDetailStyle);
 
         FrutigerAeroUI.DrawPill(new Rect(panel.x + panel.width * 0.18f, panel.y + 265f * scale,
             panel.width * 0.64f, 3f * scale), new Color(0.1f, 0.65f, 0.84f, 0.34f));
@@ -602,6 +704,7 @@ public class GolfCourseManager : MonoBehaviour
 
     public void ReturnToStartMenu()
     {
+        ResetTutorialSkipHold();
         PlayUiSound(returnToMenuSound);
         if (menuCamera != null)
             menuCamera.StopOrbit();
@@ -665,6 +768,7 @@ public class GolfCourseManager : MonoBehaviour
     }
     public void RestartCurrentHole()
     {
+        ResetTutorialSkipHold();
         HoleStage activeStage = GetActiveStage();
         if (ball == null || activeStage == null || activeStage.hole == null || activeStage.teePoint == null)
             return;
@@ -680,6 +784,39 @@ public class GolfCourseManager : MonoBehaviour
             cameraController.SnapFollowToTarget();
 
         RestoreTutorialControlsForCurrentHole();
+        BeginScoredHole();
+    }
+
+    private void BeginScoredHole()
+    {
+        if (cameraController != null)
+            cameraController.SetPresentationInputBlocked(false);
+        if (tutorialMode || showingStartMenu) return;
+        HoleStage stage = GetActiveStage();
+        if (stage == null || stage.hole == null || stage.teePoint == null) return;
+        Scorecard.BeginHole(activeHoleIndex);
+        RiskBubbles.BeginHole(activeHoleIndex, stage.hole, ResolveBallSpawnPoint(stage.teePoint), ball);
+        if (cameraController != null) cameraController.LockMouse();
+    }
+
+    public void ContinueAfterScorecard()
+    {
+        if (!IsShowingResults) return;
+        if (courseComplete) { ReplayRound(); return; }
+        Scorecard.HideResults();
+        AdvanceToNextHole();
+    }
+
+    public void RetryScoredHole()
+    {
+        if (!IsShowingResults) return;
+        RestartCurrentHole();
+    }
+
+    public void ReplayRound()
+    {
+        ReturnToStartMenu();
+        BeginGameplay();
     }
 
     public void HandleHoleEntered(HoleTrigger enteredHole, BallPlayerController enteringBall)
@@ -691,6 +828,10 @@ public class GolfCourseManager : MonoBehaviour
             ball = enteringBall;
 
         if (enteringBall != ball)
+            return;
+
+        // Repositioning or passive physics before the first shot is not an ace.
+        if (!tutorialMode && ball.StrokeCount < 1)
             return;
 
         HoleStage activeStage = GetActiveStage();
@@ -740,7 +881,14 @@ public class GolfCourseManager : MonoBehaviour
         else
         {
             courseComplete = true;
-            PlayUiSound(courseCompleteSound);
+            // The trophy presentation owns the completion fanfare.
+        }
+        if (!tutorialMode)
+        {
+            Scorecard.CompleteHole(activeHoleIndex, ball.StrokeCount, RiskBubbles.Collected, RiskBubbles.Available);
+            RiskBubbles.Clear();
+            if (cameraController != null)
+                cameraController.SetPresentationInputBlocked(true);
         }
     }
     public void HandleHoleExited(HoleTrigger exitedHole, BallPlayerController exitingBall)
@@ -822,10 +970,12 @@ public class GolfCourseManager : MonoBehaviour
 
         isTransitioning = false;
         awaitingNextHole = false;
+        BeginScoredHole();
     }
 
     private void StartActualCourseAfterTutorial()
     {
+        ResetTutorialSkipHold();
         tutorialCourseTransitionTime = -1f;
         tutorialMode = false;
         activeTutorialHoleIndex = 0;
@@ -836,8 +986,70 @@ public class GolfCourseManager : MonoBehaviour
         PlayerPrefs.SetInt(TutorialCompletedPreference, 1);
         PlayerPrefs.Save();
         startCourseOnSceneLoad = true;
+        startTutorialOnSceneLoad = false;
+        GolfShotFeedback.CancelActiveCinematics();
         Time.timeScale = 1f;
+        AudioListener.pause = false;
         SceneManager.LoadScene(MainCourseSceneName);
+    }
+
+    public void ReplayTutorial()
+    {
+        GameSettings.Save();
+        GolfShotFeedback.CancelActiveCinematics();
+        ResetTutorialSkipHold();
+        startCourseOnSceneLoad = false;
+        startTutorialOnSceneLoad = true;
+        Time.timeScale = 1f;
+        AudioListener.pause = false;
+        SceneManager.LoadScene(TutorialSceneName);
+    }
+
+    private bool UpdateTutorialSkipHold(bool held, float unscaledDelta)
+    {
+        if (!tutorialMode || Time.timeScale <= 0f)
+        {
+            ResetTutorialSkipHold();
+            return false;
+        }
+        if (!held)
+        {
+            tutorialSkipHeld = 0f;
+            return false;
+        }
+
+        tutorialSkipHeld += Mathf.Max(0f, unscaledDelta);
+        if (tutorialSkipHeld < TutorialSkipHoldSeconds)
+            return false;
+
+        StartActualCourseAfterTutorial();
+        return true;
+    }
+
+    private void ResetTutorialSkipHold()
+    {
+        tutorialSkipHeld = 0f;
+        tutorialAdvanceOnRelease = false;
+    }
+
+    private void OnApplicationFocus(bool focused)
+    {
+        if (!focused) ResetTutorialSkipHold();
+    }
+
+    private void DrawTutorialSkipPrompt()
+    {
+        float s = Mathf.Min(Screen.width / 1280f, Screen.height / 720f);
+        s = Mathf.Max(0.4f, s);
+        if (tutorialSkipStyle == null)
+            tutorialSkipStyle = FrutigerAeroUI.CreateStyle(16, FrutigerAeroUI.Ink);
+        tutorialSkipStyle.fontSize = Mathf.Max(10, Mathf.RoundToInt(16f * s));
+        Rect panel = new Rect(22f * s, Screen.height - 80f * s, 270f * s, 58f * s);
+        FrutigerAeroUI.DrawGlassPanel(panel, FrutigerAeroUI.Cyan, new Color(0.86f, 0.98f, 1f, 0.94f), 0.16f);
+        GUI.Label(new Rect(panel.x + 10f * s, panel.y + 7f * s, panel.width - 20f * s, 27f * s),
+            "Hold Space to skip", tutorialSkipStyle);
+        FrutigerAeroUI.DrawProgressTrack(new Rect(panel.x + 15f * s, panel.yMax - 14f * s,
+            panel.width - 30f * s, 5f * s), TutorialSkipProgress, FrutigerAeroUI.Cyan);
     }
     private void EnsurePromptStyles()
     {
@@ -1021,6 +1233,8 @@ public class GolfCourseManager : MonoBehaviour
         return tee != null && tee.BallSpawnPoint != null ? tee.BallSpawnPoint : teePoint;
     }
 }
+
+
 
 
 

@@ -32,6 +32,9 @@ public class HoleTrigger : MonoBehaviour
     [SerializeField, Min(0.1f)] private float wrongWayArrowHeight = 2.1f;
     [SerializeField, Min(0.1f)] private float wrongWayArrowSize = 1.15f;
 
+    public bool IsCompleted => holeCompleted;
+    public event System.Action ResetRequested;
+
     private bool holeCompleted;
     private bool warnedMissingCourseManager;
     private int completedStrokeCount;
@@ -173,6 +176,7 @@ public class HoleTrigger : MonoBehaviour
         completedStrokeCount = 0;
         resultShownAt = 0f;
         ClearWrongWayWarning(wrongWayBall);
+        ResetRequested?.Invoke();
     }
 
     private void PlayHoleEffects()
@@ -211,6 +215,8 @@ public class HoleTrigger : MonoBehaviour
             DrawWrongWayBanner();
 
         if (!holeCompleted || !showResult)
+            return;
+        if (courseManager != null && courseManager.IsShowingResults)
             return;
 
         float scale = Mathf.Clamp(Screen.width / 1200f, 0.72f, 1.25f);
@@ -554,3 +560,4 @@ public class HoleTrigger : MonoBehaviour
             Destroy(wrongArrowFaceMaterial);
     }
 }
+

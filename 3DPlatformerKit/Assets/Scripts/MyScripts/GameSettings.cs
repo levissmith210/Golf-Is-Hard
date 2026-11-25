@@ -196,7 +196,7 @@ public static class GameSettings
     }
 
     /// <summary>Draws the shared settings panel and returns true when Back is pressed.</summary>
-    public static bool DrawSettingsMenu()
+    public static bool DrawSettingsMenu(Action replayTutorial = null)
     {
         EnsureLoaded();
         EnsureStyles();
@@ -222,7 +222,8 @@ public static class GameSettings
         GUI.Label(new Rect(panel.x + 24f * scale, panel.y + 18f * scale,
             panel.width - 48f * scale, 44f * scale), "SETTINGS", titleStyle);
         GUI.Label(new Rect(panel.x + 24f * scale, panel.y + 55f * scale,
-            panel.width - 48f * scale, 22f * scale), "AUDIO  •  CAMERA", subtitleStyle);
+            panel.width - 48f * scale, 22f * scale),
+            replayTutorial != null ? "AUDIO  •  CAMERA  •  TUTORIAL" : "AUDIO  •  CAMERA", subtitleStyle);
         FrutigerAeroUI.DrawPill(new Rect(panel.x + 25f * scale, panel.y + 84f * scale,
             panel.width - 50f * scale, 3f * scale), new Color(0.12f, 0.65f, 0.82f, 0.32f));
 
@@ -248,13 +249,24 @@ public static class GameSettings
         SetInvertCameraX(GUI.Toggle(invertXRect, InvertCameraX, "INVERT HORIZONTAL CAMERA", toggleStyle));
         SetInvertCameraY(GUI.Toggle(invertYRect, InvertCameraY, "INVERT VERTICAL CAMERA", toggleStyle));
 
-        float backWidth = Mathf.Min(230f * scale, panel.width - 56f * scale);
-        Rect backButton = new Rect(panel.center.x - backWidth * 0.5f,
+        bool replayPressed = false;
+        float backWidth = replayTutorial != null
+            ? (panel.width - 70f * scale) * 0.5f
+            : Mathf.Min(230f * scale, panel.width - 56f * scale);
+        Rect backButton = new Rect(replayTutorial != null ? panel.xMax - 28f * scale - backWidth : panel.center.x - backWidth * 0.5f,
             panel.y + 457f * scale, backWidth, 50f * scale);
+        if (replayTutorial != null)
+        {
+            Rect replayButton = new Rect(panel.x + 28f * scale, backButton.y, backWidth, backButton.height);
+            replayPressed = FrutigerAeroUI.DrawGlassButton(
+                replayButton, "REPLAY TUTORIAL", backButtonStyle, FrutigerAeroUI.Blue, false);
+        }
         bool backPressed = FrutigerAeroUI.DrawGlassButton(
             backButton, "BACK", backButtonStyle, FrutigerAeroUI.Green, true);
 
         GUI.depth = previousDepth;
+        if (replayPressed)
+            replayTutorial();
         return backPressed;
     }
 

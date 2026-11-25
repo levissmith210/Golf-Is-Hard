@@ -492,9 +492,26 @@ public class BallPlayerController : MonoBehaviour
         if (rollingDrag <= 0f || !IsTouchingGround())
             return;
 
-        Vector3 horizontalVelocity = Vector3.ProjectOnPlane(GetBallVelocity(), Vector3.up);
+        Vector3 horizontalVelocity = Vector3.ProjectOnPlane(GetBallVelocity() - GetGroundSupportVelocity(), Vector3.up);
         if (horizontalVelocity.sqrMagnitude > 0.0025f)
             ballRigidbody.AddForce(-horizontalVelocity * rollingDrag, ForceMode.Acceleration);
+    }
+
+    /// <summary>Ground drag should stop rolling relative to the deck, while preserving the deck's travel.</summary>
+    private Vector3 GetGroundSupportVelocity()
+    {
+        if (ballRigidbody == null)
+            return Vector3.zero;
+
+        foreach (Collider collider in groundedColliders)
+        {
+            if (collider == null || !collider.enabled || !collider.gameObject.activeInHierarchy)
+                continue;
+            Rigidbody support = collider.attachedRigidbody;
+            if (support != null && support != ballRigidbody)
+                return support.GetPointVelocity(ballRigidbody.position);
+        }
+        return Vector3.zero;
     }
 
     private float BallRadius
@@ -556,8 +573,16 @@ public class BallPlayerController : MonoBehaviour
             if (Vector3.Dot(contacts[i].normal, Vector3.up) < minimumGroundUpDot) continue;
             SurfaceFeel feel = FeelFor(AeroSurface.Lookup(collision.collider, contacts[i].point));
             if (feel == null || feel.landingKeep >= 0.999f) return;
-            SetBallVelocity(GetBallVelocity() * feel.landingKeep);
-            ballRigidbody.angularVelocity *= feel.landingKeep;
+            Rigidbody support = collision.collider.attachedRigidbody;
+            Vector3 supportVelocity = support != null && support != ballRigidbody
+                ? support.GetPointVelocity(contacts[i].point)
+                : Vector3.zero;
+            Vector3 supportAngularVelocity = support != null && support != ballRigidbody
+                ? support.angularVelocity
+                : Vector3.zero;
+            SetBallVelocity(supportVelocity + (GetBallVelocity() - supportVelocity) * feel.landingKeep);
+            ballRigidbody.angularVelocity = supportAngularVelocity +
+                (ballRigidbody.angularVelocity - supportAngularVelocity) * feel.landingKeep;
             return;
         }
     }
@@ -667,6 +692,11 @@ public class BallPlayerController : MonoBehaviour
     /// <summary>Places the ball at the next tee and restores shot control for a new hole.</summary>
     public void ResetForNextHole(Vector3 position, Quaternion rotation)
     {
+        ResetForNextHoleInternal(position, rotation, true);
+    }
+
+    private void ResetForNextHoleInternal(Vector3 position, Quaternion rotation, bool resetSafety)
+    {
         if (shotFeedback != null)
             shotFeedback.CancelPresentation();
         if (ballRigidbody == null)
@@ -713,6 +743,12 @@ public class BallPlayerController : MonoBehaviour
             if (cameraController != null)
                 cameraController.SnapFollowToTarget();
         }
+        if (resetSafety)
+        {
+            AeroBallSafety safety = GetComponent<AeroBallSafety>();
+            if (safety != null)
+                safety.ResetCheckpoint(position);
+        }
     }
 
     /// <summary>
@@ -722,7 +758,7 @@ public class BallPlayerController : MonoBehaviour
     public void ReturnToSafeSpot(Vector3 position, int penaltyStrokes)
     {
         int strokesSoFar = StrokeCount;
-        ResetForNextHole(position, transform.rotation);
+        ResetForNextHoleInternal(position, transform.rotation, false);
         StrokeCount = strokesSoFar + Mathf.Max(0, penaltyStrokes);
     }
 
@@ -1568,6 +1604,7 @@ public class BallPlayerController : MonoBehaviour
         GUI.color = previousColor;
     }
 }
+
 
 
 

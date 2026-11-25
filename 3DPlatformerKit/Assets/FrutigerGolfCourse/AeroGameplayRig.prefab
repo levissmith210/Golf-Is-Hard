@@ -152,6 +152,7 @@ MonoBehaviour:
   - {fileID: 8300000, guid: 6b38e86aa402ace4e988c684f5273ccd, type: 3}
   - {fileID: 8300000, guid: f3392924cd4260b418e4b73436fe68fa, type: 3}
   - {fileID: 8300000, guid: 624af63d84be9f344b52659c4aea2005, type: 3}
+  victoryCrossfadeDuration: 0.6
 --- !u!1 &2837059049367592482
 GameObject:
   m_ObjectHideFlags: 0
@@ -252,6 +253,9 @@ GameObject:
   - component: {fileID: 6949688668074784070}
   - component: {fileID: 2348429537342416956}
   - component: {fileID: 3736971169780493762}
+  - component: {fileID: 4174115053993466010}
+  - component: {fileID: 2581799266970531998}
+  - component: {fileID: 5757770638858343501}
   m_Layer: 0
   m_Name: GolfCourseManagerObject
   m_TagString: Untagged
@@ -399,6 +403,53 @@ AudioSource:
     m_PreInfinity: 2
     m_PostInfinity: 2
     m_RotationOrder: 4
+--- !u!114 &4174115053993466010
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4150674274068640388}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6025105888b945e8b3e6f2632253934a, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::GolfVictoryTrophy
+--- !u!114 &2581799266970531998
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4150674274068640388}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 25890148f08c4b45a2942104742ce894, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::GolfVictoryAudio
+  victoryMusic: {fileID: 0}
+  courseFanfare: {fileID: 0}
+  bronzeReveal: {fileID: 0}
+  silverReveal: {fileID: 0}
+  goldReveal: {fileID: 0}
+  diamondReveal: {fileID: 0}
+  newRecordSound: {fileID: 0}
+  buttonHoverSound: {fileID: 0}
+  buttonClickSound: {fileID: 0}
+  celebrationVolume: 0.65
+  buttonVolume: 0.42
+--- !u!114 &5757770638858343501
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4150674274068640388}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d4a4970549042c348a226c46b0ec1850, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::GolfVictoryScreen
 --- !u!1 &6649582041463490975
 GameObject:
   m_ObjectHideFlags: 0
@@ -556,6 +607,7 @@ MonoBehaviour:
   aimCamera: {fileID: 3928138267205971470}
   maxChargeTime: 2
   chargeSpeedMultiplier: 2
+  perfectShotBonus: 0.08
   minimumShotForce: 4.5
   maximumShotForce: 21
   shotForceMultiplier: 1.35
@@ -817,3 +869,6 @@ MonoBehaviour:
     m_Bits: 4294967295
   collisionRadius: 0.2
   collisionPadding: 0.1
+  chaseShots: 1
+  impactShake: 0.65
+  flightFieldOfView: 6

@@ -86,7 +86,7 @@ public class PauseMenu : MonoBehaviour
         FrutigerAeroUI.DrawPauseBackdrop();
         if (settingsOpen)
         {
-            if (GameSettings.DrawSettingsMenu())
+            if (GameSettings.DrawSettingsMenu(ReplayTutorialFromSettings))
             {
                 settingsOpen = false;
                 GameSettings.Save();
@@ -211,6 +211,18 @@ public class PauseMenu : MonoBehaviour
             LockCursor();
         }
     }
+    private void ReplayTutorialFromSettings()
+    {
+        GolfCourseManager courseManager = FindObjectOfType<GolfCourseManager>();
+        if (courseManager == null)
+            return;
+
+        settingsOpen = false;
+        GameSettings.Save();
+        ResumeGame(false);
+        courseManager.ReplayTutorial();
+    }
+
     private void RestartLevel()
     {
         GolfCourseManager courseManager = FindObjectOfType<GolfCourseManager>();

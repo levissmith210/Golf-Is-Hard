@@ -1,0 +1,26 @@
+GOLF IS HARD - TROPHY CELEBRATION
+
+The trophy screen appears after completing every hole in the course. It uses the total round score, not just the last hole.
+
+For the current nine-hole course:
+- Diamond: at least 6 strokes under total par.
+- Gold: total par or better.
+- Silver: up to 9 strokes over total par.
+- Bronze: finish the course.
+Bubble collections are celebrated separately and never subtract golf strokes.
+
+The sequence includes an animated 3D trophy, confetti, score count-up, personal-best flourish, scorecard summary, replay, and Main Menu.
+Original synthesized sounds and a looping victory song work without any assigned audio files.
+
+OPTIONAL AUDIO OVERRIDES
+Select AeroGameplayRig > GolfCourseManagerObject and the Golf Victory Audio component.
+Assign Victory Music, Course Fanfare, individual trophy reveal sounds, New Record Sound, and button sounds if desired.
+An existing GolfCourseManager Course Complete Sound is used as a fallback fanfare, so it is played once.
+Music/SFX/master settings and pause ducking apply to the celebration.
+
+EDITOR PREVIEW
+Tools > Golf is Hard > Preview Trophy Celebration
+Preview all four awards, replay the reveal, and toggle the scorecard. This does not enter Play mode or save any score records.
+
+Runtime files: GolfVictoryScreen, GolfVictoryTrophy, GolfVictoryAudio.
+GolfScorecard opens the presentation on a completed round. Older scenes get the components automatically through Configure.

@@ -151,6 +151,7 @@ public static class FrutigerAeroNineHoleBuilder
             cam.transform.SetPositionAndRotation(v.position, v.rotation);
         }
         AddHazards(env);
+        AeroCourseMechanicsInstaller.UpgradeScene(scene, false);
         TagSurfaces();
 
         EditorSceneManager.MarkSceneDirty(scene);
@@ -1922,3 +1923,5 @@ public static class FrutigerAeroNineHoleBuilder
         Bubbles(root, new Vector3(0f, 3f, 100f), new Vector3(40f, 16f, 70f), 26);
     }
 }
+
+

@@ -52,6 +52,7 @@ public class ThirdPersonCameraController : MonoBehaviour
     private Vector3 followVelocity;
     private bool hasFollowPosition;
     private bool isCursorLocked;
+    private bool presentationInputBlocked;
     private bool tutorialLookAllowed = true;
     private bool tutorialZoomAllowed = true;
     private bool tutorialZoomResetAllowed = true;
@@ -100,7 +101,13 @@ public class ThirdPersonCameraController : MonoBehaviour
 
     public void LockMouse()
     {
-        SetCursorLocked(true);
+        SetCursorLocked(!presentationInputBlocked);
+    }
+
+    public void SetPresentationInputBlocked(bool blocked)
+    {
+        presentationInputBlocked = blocked;
+        if (blocked) SetCursorLocked(false);
     }
 
     public void UnlockMouse()
@@ -159,7 +166,7 @@ public class ThirdPersonCameraController : MonoBehaviour
     {
         CursorCapturedThisFrame = false;
 
-        if (target == null || Time.timeScale <= 0f)
+        if (target == null || Time.timeScale <= 0f || presentationInputBlocked)
             return;
 
         // The first left click captures the mouse. The capture click is ignored
